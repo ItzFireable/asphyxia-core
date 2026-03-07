@@ -21,8 +21,12 @@ mixin li_plugin(icon, label, link, pages)
       li
         a(href=`/plugin/${link}` class=(((plugin == link) && (subidentifier == 'overview')) ? 'is-active' : ''))
           span Overview
-        a(href=`/plugin/${link}/profiles` class=(((plugin == link) && (subidentifier == 'profiles')) ? 'is-active' : ''))
-          span Profiles
+        if admin
+          a(href=`/plugin/${link}/profiles` class=(((plugin == link) && (subidentifier == 'profiles')) ? 'is-active' : ''))
+            span Profiles
+        else
+          a(href=`/plugin/${link}/my-profile` class=(((plugin == link) && (subidentifier == 'profiles')) ? 'is-active' : ''))
+            span Profile
         each page in pages
           a(href=`/plugin/${link}/${page.link}` class=(((plugin == link) && (subidentifier == page.link)) ? 'is-active' : ''))
             span #{page.name}
@@ -98,7 +102,10 @@ html.has-aside-left.has-aside-mobile-transition.has-navbar-fixed-top.has-aside-e
           p.menu-label Core
           ul.menu-list
             +li_menu_item("desktop-mac", "Dashboard", "/")
-            +li_menu_item("account-circle", "Profiles", "/profiles")
+            if admin
+              +li_menu_item("account-circle", "Profiles", "/profiles")
+            else
+              +li_menu_item("account-circle", "Profile", "/my-profile")
             if admin
               +li_menu_item("database", "Data Management", "/data")
             +li_menu_item("account-cog", "Account", "/account")

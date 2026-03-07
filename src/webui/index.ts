@@ -184,12 +184,28 @@ webui.post(
       });
     }
 
-    const existingAccount = await FindUserByCardNumber(nfcId);
-    if (existingAccount) {
-      return res.render('signup', {
-        error: 'This card number is already registered to an account.',
-        old,
-      });
+    // Check if this card (or any other card on the same profile) is already owned by a user account
+    if (card.__refid) {
+      const profileCards = await FindCardsByRefid(card.__refid);
+      if (profileCards && Array.isArray(profileCards)) {
+        for (const c of profileCards) {
+          const owner = await FindUserByCardNumber(c.cid);
+          if (owner) {
+            return res.render('signup', {
+              error: 'This card number is already registered to an account.',
+              old,
+            });
+          }
+        }
+      }
+    } else {
+      const existingAccount = await FindUserByCardNumber(nfcId);
+      if (existingAccount) {
+        return res.render('signup', {
+          error: 'This card number is already registered to an account.',
+          old,
+        });
+      }
     }
 
     const account = await CreateUserAccount(username, password, nfcId);
@@ -612,36 +628,52 @@ webui.post(
     let saved = 0;
     let skipped = 0;
 
+    // Detect if user has a v7 (Nabla) profile to determine target version
+    const v7Profile = await APIFindOne(plugin, refid, { collection: 'profile', version: 7 });
+    const targetVersion = v7Profile ? 7 : 6;
+
+    // v6→v7 clear type remapping (UC/PUC/MXV positions differ between versions)
+    // EG (v6): 0=none, 1=played, 2=clear, 3=excessive, 4=uc, 5=puc, 6=mxv
+    // Nabla (v7): 0=none, 1=played, 2=clear, 3=excessive, 4=mxv, 5=uc, 6=puc
+    const nblClearLamp = [0, 1, 2, 3, 5, 6, 4];
+
+    // Convert incoming v6 clear types to v7 format for Nabla users
+    if (targetVersion === 7) {
+      for (const score of scores) {
+        if (!score.version || score.version === 6) {
+          score.clear = nblClearLamp[score.clear] ?? score.clear;
+          score.version = 7;
+        }
+      }
+    }
+
     // Normalize clear values to a comparable ranking
-    // EG (version 6): 0=none, 1=played, 2=clear, 3=excessive, 4=uc, 5=puc, 6=mxv
-    // Nabla (version 7+): 0=none, 1=played, 2=clear, 3=excessive, 4=mxv, 5=uc, 6=puc
-    const EG_CLEAR_RANK: Record<number, number> = { 0: 0, 1: 1, 2: 2, 3: 3, 6: 4, 4: 5, 5: 6 };
     const NABLA_CLEAR_RANK: Record<number, number> = { 0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6 };
-    function clearRank(c: number, version?: number) {
-      const map = version === 7 ? NABLA_CLEAR_RANK : EG_CLEAR_RANK;
-      return map[c] ?? 0;
+    function clearRank(c: number) {
+      return NABLA_CLEAR_RANK[c] ?? 0;
     }
 
     for (const score of scores) {
       try {
-        // Check if score already exists for this refid
+        // Check if score already exists for this refid (filter by target version)
         const existing = await APIFind(plugin, refid, {
           collection: 'music',
           mid: score.mid,
           type: score.type,
+          version: targetVersion,
         });
 
         if (existing && existing.length > 0) {
           const ex = existing[0];
-          // Update if incoming score is higher, or clear is better (using normalized ranking), or existing has missing grade
+          // Update if incoming score is higher, or clear is better, or existing has missing grade
           if (
             score.score > ex.score ||
-            clearRank(score.clear, score.version) > clearRank(ex.clear, ex.version) ||
+            clearRank(score.clear) > clearRank(ex.clear) ||
             (!ex.grade && score.grade)
           ) {
             const update: any = {};
             if (score.score > ex.score) update.score = score.score;
-            if (clearRank(score.clear, score.version) > clearRank(ex.clear, ex.version))
+            if (clearRank(score.clear) > clearRank(ex.clear))
               update.clear = score.clear;
             if (score.grade && (!ex.grade || score.grade > ex.grade)) update.grade = score.grade;
             if (score.exscore && (!ex.exscore || score.exscore > ex.exscore))
@@ -651,7 +683,7 @@ webui.post(
               await APIUpdate(
                 plugin,
                 refid,
-                { collection: 'music', mid: score.mid, type: score.type },
+                { collection: 'music', mid: score.mid, type: score.type, version: targetVersion },
                 { $set: update }
               );
               saved++;
@@ -676,7 +708,7 @@ webui.post(
           buttonRate: 0,
           longRate: 0,
           volRate: 0,
-          version: score.version || 6,
+          version: targetVersion,
           dbver: 1,
         };
         if (score.timeAchieved) {
@@ -885,11 +917,38 @@ webui.post(
     const isOwner = await userOwnsProfile(req, refid);
     if (!isAdmin && !isOwner) return res.sendStatus(403);
 
-    const musicDbPath = path.join(process.cwd(), 'music_db.json');
+    const musicDbPath = path.join(
+      PLUGIN_PATH,
+      'sdvx@asphyxia',
+      'webui',
+      'asset',
+      'json',
+      'music_db.json'
+    );
     if (!existsSync(musicDbPath)) {
-      return res.status(500).json({ success: false, description: 'music_db.json not found' });
+      return res
+        .status(500)
+        .json({ success: false, description: 'music_db.json not found in plugin folder' });
     }
     const mdb = JSON.parse(readFileSync(musicDbPath, 'utf8'));
+
+    // Merge custom songs if file exists
+    const customDbPath = path.join(
+      PLUGIN_PATH,
+      'sdvx@asphyxia',
+      'webui',
+      'asset',
+      'json',
+      'custom_music_db.json'
+    );
+    if (existsSync(customDbPath)) {
+      try {
+        const customDb = JSON.parse(readFileSync(customDbPath, 'utf8'));
+        if (customDb?.mdb?.music?.length) {
+          mdb.mdb.music = mdb.mdb.music.concat(customDb.mdb.music);
+        }
+      } catch {}
+    }
 
     const medalCoef = [0, 0.5, 1.0, 1.02, 1.04, 1.06, 1.1];
     const gradeCoef = [0, 0.8, 0.82, 0.85, 0.88, 0.91, 0.94, 0.97, 1.0, 1.02, 1.05];
@@ -1423,8 +1482,23 @@ webui.get(
 );
 
 webui.get(
+  '/my-profile',
+  wrap(async (req, res) => {
+    const cardNumber = req.session.user!.cardNumber;
+    if (cardNumber) {
+      const card = await FindCard(cardNumber);
+      if (card && card.__refid) {
+        return res.redirect(`/profile/${card.__refid}`);
+      }
+    }
+    return res.redirect('/');
+  })
+);
+
+webui.get(
   '/profiles',
   wrap(async (req, res) => {
+    if (!req.session.user!.admin) return res.redirect('/');
     const profiles = (await GetProfiles()) || [];
     const isAdmin = req.session.user!.admin;
     for (const profile of profiles) {
@@ -1460,7 +1534,7 @@ webui.get(
 
     const isAdmin = req.session.user!.admin;
     const isOwner = await userOwnsProfile(req, refid);
-    if (!isAdmin && !isOwner) return res.redirect('/profiles');
+    if (!isAdmin && !isOwner) return res.redirect('/');
 
     profile.cards = await FindCardsByRefid(refid);
 
@@ -1738,10 +1812,30 @@ webui.get(
   })
 );
 
+// Plugin My Profile (redirect to own profile)
+webui.get(
+  '/plugin/:plugin/my-profile',
+  wrap(async (req, res, next) => {
+    const plugin = ROOT_CONTAINER.getPluginByID(req.params['plugin']);
+    if (!plugin) return next();
+
+    const cardNumber = req.session.user!.cardNumber;
+    if (cardNumber) {
+      const card = await FindCard(cardNumber);
+      if (card && card.__refid) {
+        return res.redirect(`/plugin/${req.params['plugin']}/profile?refid=${card.__refid}`);
+      }
+    }
+    return res.redirect(`/plugin/${req.params['plugin']}`);
+  })
+);
+
 // Plugin Profiles
 webui.get(
   '/plugin/:plugin/profiles',
   wrap(async (req, res, next) => {
+    if (!req.session.user!.admin) return res.redirect('/');
+
     const plugin = ROOT_CONTAINER.getPluginByID(req.params['plugin']);
 
     if (!plugin) {

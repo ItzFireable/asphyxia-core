@@ -261,6 +261,167 @@ export async function GetUniqueInt() {
   }
 }
 
+export async function FindOrCreateAimeId(refid: string): Promise<number> {
+  try {
+    const profile = await CoreDB.findOneAsync<any>({ __s: 'profile', __refid: refid });
+    if (profile && profile.aime_id != null) {
+      return profile.aime_id;
+    }
+    const id = await GetUniqueInt();
+    await CoreDB.updateAsync(
+      { __s: 'profile', __refid: refid },
+      { $set: { aime_id: id } }
+    );
+    return id;
+  } catch (err) {
+    Logger.error(err);
+    return -1;
+  }
+}
+
+export async function FindRefidByAimeId(aimeId: number): Promise<string | null> {
+  try {
+    const profile = await CoreDB.findOneAsync<any>({ __s: 'profile', aime_id: aimeId });
+    return profile ? profile.__refid : null;
+  } catch (err) {
+    Logger.error(err);
+    return null;
+  }
+}
+
+export async function FindProfileByAimeId(aimeId: number): Promise<any | null> {
+  try {
+    return await CoreDB.findOneAsync<any>({ __s: 'profile', aime_id: aimeId });
+  } catch (err) {
+    Logger.error(err);
+    return null;
+  }
+}
+
+export async function FindOrCreateCardProfile(
+  accessCodeHex: string,
+  gameCode: string
+): Promise<{ aimeId: number; isNew: boolean } | null> {
+  try {
+    // access codes come in as raw hex bytes from the aimedb packet, convert to
+    // the stored cid format (uppercase hex string)
+    const cid = accessCodeHex.toUpperCase();
+    let card = await CoreDB.findOneAsync<any>({ __s: 'card', cid });
+    let isNew = false;
+
+    if (!card) {
+      // Auto-register: create profile then card
+      if (!CONFIG.allow_register) return null;
+
+      const profile = await CreateProfile('0000', gameCode);
+      if (!profile) return null;
+
+      card = await CreateCard(cid, profile.__refid);
+      if (!card) return null;
+
+      isNew = true;
+    }
+
+    const aimeId = await FindOrCreateAimeId(card.__refid);
+    return { aimeId, isNew };
+  } catch (err) {
+    Logger.error(err);
+    return null;
+  }
+}
+
+export async function FindProfileByAccessCode(
+  accessCodeHex: string
+): Promise<{ aimeId: number; refid: string } | null> {
+  try {
+    const cid = accessCodeHex.toUpperCase();
+    const card = await CoreDB.findOneAsync<any>({ __s: 'card', cid });
+    if (!card) return null;
+    const aimeId = await FindOrCreateAimeId(card.__refid);
+    return { aimeId, refid: card.__refid };
+  } catch (err) {
+    Logger.error(err);
+    return null;
+  }
+}
+
+export async function FindProfileByFeliCa(
+  idmHex: string
+): Promise<{ aimeId: number; accessCode: string } | null> {
+  try {
+    const felica = await CoreDB.findOneAsync<any>({ __s: 'felica', idm: idmHex.toUpperCase() });
+    if (!felica) return null;
+    const card = await CoreDB.findOneAsync<any>({ __s: 'card', cid: felica.cid });
+    if (!card) return null;
+    const aimeId = await FindOrCreateAimeId(card.__refid);
+    return { aimeId, accessCode: felica.cid };
+  } catch (err) {
+    Logger.error(err);
+    return null;
+  }
+}
+
+export async function RegisterFeliCa(
+  idmHex: string,
+  gameCode: string
+): Promise<{ aimeId: number; accessCode: string } | null> {
+  try {
+    if (!CONFIG.allow_register) return null;
+    const count = await GetUniqueInt();
+    const suffix = count.toString(16).padStart(11, '0').toUpperCase();
+    const accessCode = `01035${suffix}`;
+    const cid = accessCode;
+
+    const profile = await CreateProfile('0000', gameCode);
+    if (!profile) return null;
+
+    await CreateCard(cid, profile.__refid);
+    await CoreDB.insertAsync({ __s: 'felica', idm: idmHex.toUpperCase(), cid });
+
+    const aimeId = await FindOrCreateAimeId(profile.__refid);
+    return { aimeId, accessCode };
+  } catch (err) {
+    Logger.error(err);
+    return null;
+  }
+}
+
+export async function FindProfileByAimeKey(
+  accessCodeHex: string
+): Promise<any | null> {
+  try {
+    const cid = accessCodeHex.toUpperCase();
+    const card = await CoreDB.findOneAsync<any>({ __s: 'card', cid });
+    if (!card) return null;
+    return await FindProfile(card.__refid);
+  } catch (err) {
+    Logger.error(err);
+    return null;
+  }
+}
+
+export async function FindProfileByGameUserId(
+  gameCode: string,
+  userId: number
+): Promise<any | null> {
+  try {
+    return await CoreDB.findOneAsync<any>({ __s: 'profile', aime_id: userId });
+  } catch (err) {
+    Logger.error(err);
+    return null;
+  }
+}
+
+export async function GetAimeIdByUserId(userId: number): Promise<string | null> {
+  try {
+    const profile = await CoreDB.findOneAsync<any>({ __s: 'profile', aime_id: userId });
+    return profile ? profile.__refid : null;
+  } catch (err) {
+    Logger.error(err);
+    return null;
+  }
+}
+
 export async function PluginStats(): Promise<
   {
     name: string;
@@ -590,18 +751,45 @@ export async function FindUserByUsername(username: string) {
 //            Arcades & Cabinets
 // =========================================
 
-export async function CreateArcade(name: string, region: string, country: string, latitude: number, longitude: number) {
+export async function CreateArcade(
+  name: string,
+  region: string,
+  country: string,
+  latitude: number,
+  longitude: number,
+  place_id: string = '0123',
+  region_name0: string = '',
+  region_name1: string = '',
+  region_name2: string = '',
+  region_name3: string = ''
+) {
   try {
     const id = ID_GEN.encode(Date.now());
     return await CoreDB.insertAsync({
       __s: 'arcade',
       id,
       name,
+      place_id,
       region,
+      region_name0,
+      region_name1,
+      region_name2,
+      region_name3,
       country,
       latitude,
-      longitude
+      longitude,
     });
+  } catch (err) {
+    Logger.error(err);
+    return null;
+  }
+}
+
+export async function FindArcadeForCabinet(pcbid: string): Promise<any | null> {
+  try {
+    const cabinet = await CoreDB.findOneAsync<any>({ __s: 'cabinet', pcbid });
+    if (!cabinet || !cabinet.arcade_id) return null;
+    return await CoreDB.findOneAsync<any>({ __s: 'arcade', id: cabinet.arcade_id });
   } catch (err) {
     Logger.error(err);
     return null;

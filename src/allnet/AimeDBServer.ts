@@ -1,183 +1,446 @@
 import * as net from 'net';
 import * as crypto from 'crypto';
 import { Logger } from '../utils/Logger';
+import {
+    FindProfileByAccessCode,
+    FindOrCreateCardProfile,
+    FindProfileByFeliCa,
+    RegisterFeliCa,
+    CONFIG,
+} from '../utils/EamuseIO';
 
 const AIMEDB_KEY = Buffer.from('Copyright(C)SEGA');
 
 const CMD_FELICA_LOOKUP = 0x01;
 const CMD_FELICA_REGISTER = 0x02;
 const CMD_FELICA_RESP = 0x03;
+
 const CMD_LOOKUP = 0x04;
 const CMD_REGISTER = 0x05;
 const CMD_LOOKUP_RESP = 0x06;
-const CMD_LOG = 0x09;
-const CMD_LOG_EX = 0x0a;
+
+const CMD_STATUS_LOG = 0x07;
+const CMD_STATUS_LOG_RESP = 0x08;
+
+const CMD_AIME_LOG = 0x09;
+const CMD_AIME_LOG_RESP = 0x0A;
+
+const CMD_CAMPAIGN = 0x0B;
+const CMD_CAMPAIGN_RESP = 0x0C;
+
+const CMD_CAMPAIGN_CLEAR = 0x0D;
+const CMD_CAMPAIGN_CLEAR_RESP = 0x0E;
+
+const CMD_LOOKUP_EX = 0x0F;
+const CMD_LOOKUP_EX_RESP = 0x10;
+
+const CMD_FELICA_LOOKUP_EX = 0x11;
+const CMD_FELICA_LOOKUP_EX_RESP = 0x12;
+
+const CMD_AIME_LOG_EX = 0x13;
+const CMD_AIME_LOG_EX_RESP = 0x14;
+
 const CMD_HELLO = 0x64;
+const CMD_HELLO_RESP = 0x65;
 const CMD_GOODBYE = 0x66;
 
-const RESULT_UNKNOWN_ERROR = 0x00;
-const RESULT_OK = 0x01;
+const STATUS_OK = 1;
+const STATUS_BAN_SYS_USER = 4;
+const STATUS_BAN_SYS = 5;
+const STATUS_BAN_USER = 6;
+const STATUS_LOCK_SYS_USER = 8;
+const STATUS_LOCK_SYS = 9;
+const STATUS_LOCK_USER = 10;
+
+
+const HDR_MAGIC = 0;
+const HDR_PROTO_VER = 2;
+const HDR_CMD = 4;
+const HDR_LENGTH = 6;
+const HDR_STATUS = 8;
+const HDR_GAME_ID = 10;
+const HDR_STORE_ID = 16;
+const HDR_KEYCHIP = 20;
+const HDR_SIZE = 32;
+
+const PROTO_VER_NEW_CAMPAIGN = 0x3030;
+
+const DATA_START = HDR_SIZE;
+const DEFAULT_PORT = 22345;
 
 export class AimeDBServer {
     private server: net.Server;
-    private port: number = 22356;
+    private port: number = DEFAULT_PORT;
 
     constructor() {
-        this.server = net.createServer((socket) => {
-            this.handleConnection(socket);
-        });
+        this.server = net.createServer(s => this.handleConnection(s));
     }
 
-    public getPort(): number {
-        return this.port;
-    }
+    public getPort(): number { return this.port; }
 
     public start(port?: number) {
         if (port) this.port = port;
-        this.server.listen(this.port, '0.0.0.0', () => {
-            Logger.info(`[AimeDB] Listening on 0.0.0.0:${this.port}`);
-        });
+        this.server.listen(this.port, '0.0.0.0', () =>
+            Logger.info(`[AimeDB] Listening on 0.0.0.0:${this.port}`)
+        );
     }
 
     private decrypt(data: Buffer): Buffer {
-        const decipher = crypto.createDecipheriv('aes-128-ecb', AIMEDB_KEY, null);
-        decipher.setAutoPadding(false);
-        return Buffer.concat([decipher.update(data), decipher.final()]);
+        const d = crypto.createDecipheriv('aes-128-ecb', AIMEDB_KEY, null);
+        d.setAutoPadding(false);
+        return Buffer.concat([d.update(data), d.final()]);
     }
 
     private encrypt(data: Buffer): Buffer {
         const padLen = (16 - (data.length % 16)) % 16;
-        const padded = padLen > 0 ? Buffer.concat([data, Buffer.alloc(padLen, 0)]) : data;
-        const cipher = crypto.createCipheriv('aes-128-ecb', AIMEDB_KEY, null);
-        cipher.setAutoPadding(false);
-        return Buffer.concat([cipher.update(padded), cipher.final()]);
+        const padded = padLen > 0
+            ? Buffer.concat([data, Buffer.alloc(padLen, 0)])
+            : data;
+        const e = crypto.createCipheriv('aes-128-ecb', AIMEDB_KEY, null);
+        e.setAutoPadding(false);
+        return Buffer.concat([e.update(padded), e.final()]);
     }
 
     private async handleConnection(socket: net.Socket) {
-        let buffer = Buffer.alloc(0);
+        let buf = Buffer.alloc(0);
 
-        socket.on('data', async (chunk) => {
-            buffer = Buffer.concat([buffer, chunk]);
+        socket.on('data', async chunk => {
+            buf = Buffer.concat([buf, chunk]);
 
-            while (buffer.length >= 32) {
+            while (buf.length >= HDR_SIZE) {
+                const hdr = this.decrypt(buf.slice(0, HDR_SIZE));
+                const magic = hdr.readUInt16LE(HDR_MAGIC);
+
+                if (magic !== 0xa13e) {
+                    buf = buf.slice(1);
+                    continue;
+                }
+
+                const pktLen = hdr.readUInt16LE(HDR_LENGTH);
+                const padded = Math.ceil(pktLen / 16) * 16;
+
+                if (buf.length < padded) break;
+
+                const pkt = this.decrypt(buf.slice(0, padded));
+                buf = buf.slice(padded);
+
                 try {
-                    const header = this.decrypt(buffer.slice(0, 32));
-                    const magic = header.readUInt16LE(0);
-
-                    if (magic !== 0xa13e) {
-                        buffer = buffer.slice(1);
-                        continue;
-                    }
-                    const length = header.readUInt16LE(6);
-
-                    const paddedLength = Math.ceil(length / 16) * 16;
-
-                    if (buffer.length < paddedLength) {
-                        break;
-                    }
-
-                    const fullPacket = this.decrypt(buffer.slice(0, paddedLength));
-                    buffer = buffer.slice(paddedLength);
-
-                    const response = await this.processPacket(fullPacket);
-                    if (response) {
-                        socket.write(this.encrypt(response));
+                    const resp = await this.dispatch(pkt);
+                    if (resp === null) {
+                        socket.end();
+                    } else if (resp) {
+                        socket.write(this.encrypt(resp));
                     }
                 } catch (err) {
-                    Logger.error(`[AimeDB] Error processing packet: ${err.message}`);
-                    buffer = buffer.slice(16);
+                    Logger.error(`[AimeDB] Handler error: ${err.message}`);
                 }
             }
         });
 
-        socket.on('error', (err) => {
-            if (!err.message.includes('ECONNRESET')) {
+        socket.on('error', err => {
+            if (!err.message.includes('ECONNRESET'))
                 Logger.error(`[AimeDB] Socket error: ${err.message}`);
-            }
-        });
-
-        socket.on('close', () => {
-            Logger.info('[AimeDB] Connection closed');
         });
     }
 
-    private async processPacket(packet: Buffer): Promise<Buffer | null> {
-        const cmd = packet.readUInt16LE(4);
-        const gameId = packet.toString('ascii', 10, 16).replace(/\0/g, '');
-        const keychipId = packet.toString('ascii', 20, 32).replace(/\0/g, '');
+    private async dispatch(pkt: Buffer): Promise<Buffer | null | undefined> {
+        const cmd = pkt.readUInt16LE(HDR_CMD);
+        const gameId = pkt.toString('ascii', HDR_GAME_ID, HDR_GAME_ID + 6).replace(/\0/g, '');
+        const keychip = pkt.toString('ascii', HDR_KEYCHIP, HDR_KEYCHIP + 12).replace(/\0/g, '');
 
-        Logger.info(`[AimeDB] Command: 0x${cmd.toString(16).padStart(2, '0')} | Game: ${gameId} | Keychip: ${keychipId}`);
+        Logger.info(`[AimeDB] cmd=0x${cmd.toString(16).padStart(2, '0')} game=${gameId} keychip=${keychip}`);
 
         switch (cmd) {
             case CMD_FELICA_LOOKUP:
+                return this.handleFeliCaLookup(pkt, gameId);
             case CMD_FELICA_REGISTER:
-                return this.handleFeliCa(packet);
+                return this.handleFeliCaRegister(pkt, gameId);
             case CMD_LOOKUP:
+                return this.handleLookup(pkt, gameId);
             case CMD_REGISTER:
-                return this.handleLookup(packet);
-
-            case CMD_LOG:
-            case CMD_LOG_EX:
-                return this.handleLog(packet);
+                return this.handleRegister(pkt, gameId);
+            case CMD_STATUS_LOG:
+                return this.handleStatusLog(pkt);
+            case CMD_AIME_LOG:
+                return this.handleAimeLog(pkt);
+            case CMD_CAMPAIGN:
+                return this.handleCampaign(pkt);
+            case CMD_CAMPAIGN_CLEAR:
+                return this.handleCampaignClear(pkt);
+            case CMD_LOOKUP_EX:
+                return this.handleLookupEx(pkt, gameId);
+            case CMD_FELICA_LOOKUP_EX:
+                return this.handleFeliCaLookupEx(pkt, gameId);
+            case CMD_AIME_LOG_EX:
+                return this.handleAimeLogEx(pkt);
             case CMD_HELLO:
-                return this.handleHello(packet);
-
+                Logger.info('[AimeDB] Hello');
+                return this.makeHeader(pkt, CMD_HELLO_RESP, HDR_SIZE);
             case CMD_GOODBYE:
+                Logger.info('[AimeDB] Goodbye');
                 return null;
-
             default:
-                Logger.warn(`[AimeDB] Unhandled command: 0x${cmd.toString(16)}`);
-                return this.handleLog(packet);
+                Logger.warn(`[AimeDB] Unhandled cmd=0x${cmd.toString(16)}`);
+                return this.makeHeader(pkt, cmd + 1, HDR_SIZE);
         }
     }
 
-    private buildHeader(
-        requestPacket: Buffer,
-        responseCmdId: number,
+    private makeHeader(
+        req: Buffer,
+        respCmd: number,
         totalLength: number,
-        result: number = RESULT_OK
+        status: number = STATUS_OK
     ): Buffer {
-        const header = Buffer.alloc(32, 0);
-        header.writeUInt16LE(0xa13e, 0);
-        header.writeUInt16LE(requestPacket.readUInt16LE(2), 2);
-        header.writeUInt16LE(responseCmdId, 4);
-        header.writeUInt16LE(totalLength, 6);
-        header.writeUInt16LE(result, 8);
-        return header;
+        const h = Buffer.alloc(HDR_SIZE, 0);
+        h.writeUInt16LE(0xa13e, HDR_MAGIC);
+        h.writeUInt16LE(req.readUInt16LE(HDR_PROTO_VER), HDR_PROTO_VER); // echo proto ver
+        h.writeUInt16LE(respCmd, HDR_CMD);
+        h.writeUInt16LE(totalLength, HDR_LENGTH);
+        h.writeUInt16LE(status, HDR_STATUS);
+        req.copy(h, HDR_GAME_ID, HDR_GAME_ID, HDR_GAME_ID + 6);
+        req.copy(h, HDR_STORE_ID, HDR_STORE_ID, HDR_STORE_ID + 4);
+        req.copy(h, HDR_KEYCHIP, HDR_KEYCHIP, HDR_KEYCHIP + 12);
+        return h;
     }
 
-    private async handleHello(packet: Buffer): Promise<Buffer> {
-        const totalLength = 0x20;
-        const header = this.buildHeader(packet, 0x65, totalLength, RESULT_OK);
-        return header;
-    }
-
-    private async handleFeliCa(packet: Buffer): Promise<Buffer> {
-        const PAYLOAD_SIZE = 14;
-        const totalLength = 32 + PAYLOAD_SIZE;
-        const header = this.buildHeader(packet, CMD_FELICA_RESP, totalLength, RESULT_OK);
-        const payload = Buffer.alloc(PAYLOAD_SIZE, 0);
-
-        payload.writeUInt32LE(0xFFFFFFFF, 0);
-
+    private makePacket(req: Buffer, respCmd: number, payload: Buffer, status: number = STATUS_OK): Buffer {
+        const total = HDR_SIZE + payload.length;
+        const header = this.makeHeader(req, respCmd, total, status);
         return Buffer.concat([header, payload]);
     }
 
-    private async handleLookup(packet: Buffer): Promise<Buffer> {
-        const PAYLOAD_SIZE = 5;
-        const totalLength = 32 + PAYLOAD_SIZE;
-        const header = this.buildHeader(packet, CMD_LOOKUP_RESP, totalLength, RESULT_OK);
-        const payload = Buffer.alloc(PAYLOAD_SIZE, 0);
+    private async handleFeliCaLookup(pkt: Buffer, gameId: string): Promise<Buffer> {
+        const idmBuf = pkt.slice(DATA_START, DATA_START + 8);
+        const idmHex = idmBuf.readBigUInt64BE(0).toString(16).toUpperCase().padStart(16, '0');
 
-        payload.writeUInt32LE(0xFFFFFFFF, 0);
-        payload.writeUInt8(0x00, 4);
+        Logger.info(`[AimeDB] FeliCaLookup IDm=${idmHex}`);
 
-        return Buffer.concat([header, payload]);
+        if (idmHex === '0000000000000000') {
+            Logger.warn('[AimeDB] FeliCaLookup: all-zero IDm rejected');
+            return this.makeFeliCaResponse(pkt, null, STATUS_BAN_SYS);
+        }
+
+        const result = await FindProfileByFeliCa(idmHex);
+        Logger.info(`[AimeDB] FeliCaLookup IDm=${idmHex} → ${result ? result.accessCode : 'not found'}`);
+        return this.makeFeliCaResponse(pkt, result ? result.accessCode : null);
     }
 
-    private async handleLog(packet: Buffer): Promise<Buffer> {
-        const responseCmdId = packet.readUInt16LE(4) + 1;
-        const totalLength = 0x20;
-        return this.buildHeader(packet, responseCmdId, totalLength, RESULT_OK);
+    private async handleFeliCaRegister(pkt: Buffer, gameId: string): Promise<Buffer> {
+        const idmBuf = pkt.slice(DATA_START, DATA_START + 8);
+        const idmHex = idmBuf.readBigUInt64BE(0).toString(16).toUpperCase().padStart(16, '0');
+
+        Logger.info(`[AimeDB] FeliCaRegister IDm=${idmHex}`);
+
+        if (idmHex === '0000000000000000') {
+            Logger.warn('[AimeDB] FeliCaRegister: all-zero IDm rejected');
+            return this.makeFeliCaResponse(pkt, null, STATUS_BAN_SYS);
+        }
+
+        if (!CONFIG.allow_register) {
+            Logger.warn('[AimeDB] FeliCaRegister: registration disabled');
+            return this.makeFeliCaResponse(pkt, null);
+        }
+
+        const result = await RegisterFeliCa(idmHex, gameId || 'SDHD');
+        Logger.info(`[AimeDB] FeliCaRegister IDm=${idmHex} → ${result ? result.accessCode : 'failed'}`);
+        return this.makeFeliCaResponse(pkt, result ? result.accessCode : null);
+    }
+
+    private makeFeliCaResponse(pkt: Buffer, accessCode: string | null, status: number = STATUS_OK): Buffer {
+        const payload = Buffer.alloc(16, 0);
+
+        if (!accessCode) {
+            payload.writeUInt32LE(0xFFFFFFFF, 0);
+        } else {
+            payload.writeUInt32LE(0x00000000, 0);
+            const acBytes = Buffer.from(accessCode.replace(/\s/g, ''), 'hex');
+            acBytes.copy(payload, 4, 0, Math.min(acBytes.length, 10));
+        }
+
+        return this.makePacket(pkt, CMD_FELICA_RESP, payload, status);
+    }
+
+    private async handleLookup(pkt: Buffer, gameId: string): Promise<Buffer> {
+        const accessCodeHex = pkt.slice(DATA_START, DATA_START + 10).toString('hex').toUpperCase();
+
+        if (accessCodeHex === '00000000000000000000') {
+            Logger.warn('[AimeDB] Lookup: all-zero access code rejected');
+            return this.makeLookupResponse(pkt, null, STATUS_BAN_SYS);
+        }
+
+        Logger.info(`[AimeDB] Lookup accessCode=${accessCodeHex}`);
+        const result = await FindProfileByAccessCode(accessCodeHex);
+
+        if (result) {
+            Logger.info(`[AimeDB] Lookup: found aimeId=${result.aimeId}`);
+        } else {
+            Logger.info('[AimeDB] Lookup: not found');
+        }
+
+        return this.makeLookupResponse(pkt, result ? result.aimeId : null);
+    }
+
+    private async handleRegister(pkt: Buffer, gameId: string): Promise<Buffer> {
+        const accessCodeHex = pkt.slice(DATA_START, DATA_START + 10).toString('hex').toUpperCase();
+        const serialNumber = pkt.length >= DATA_START + 16
+            ? pkt.readUInt32LE(DATA_START + 12)
+            : 0;
+
+        if (accessCodeHex === '00000000000000000000') {
+            Logger.warn('[AimeDB] Register: all-zero access code rejected');
+            return this.makeLookupResponse(pkt, null, STATUS_BAN_SYS);
+        }
+
+        Logger.info(`[AimeDB] Register accessCode=${accessCodeHex} serial=0x${serialNumber.toString(16)}`);
+
+        if (!CONFIG.allow_register) {
+            Logger.warn('[AimeDB] Register: registration disabled');
+            return this.makeLookupResponse(pkt, null, STATUS_BAN_SYS);
+        }
+
+        const result = await FindOrCreateCardProfile(accessCodeHex, gameId || 'SDHD');
+        if (result) {
+            Logger.info(`[AimeDB] Register: ${result.isNew ? 'created' : 'existing'} aimeId=${result.aimeId}`);
+        } else {
+            Logger.error('[AimeDB] Register: failed to create profile');
+        }
+
+        return this.makeLookupResponse(pkt, result ? result.aimeId : null);
+    }
+
+    private makeLookupResponse(pkt: Buffer, aimeId: number | null, status: number = STATUS_OK): Buffer {
+        const payload = Buffer.alloc(16, 0);
+        payload.writeInt32LE(aimeId !== null && aimeId >= 0 ? aimeId : -1, 0);
+        payload.writeInt8(0, 4);
+        return this.makePacket(pkt, CMD_LOOKUP_RESP, payload, status);
+    }
+
+    private async handleLookupEx(pkt: Buffer, gameId: string): Promise<Buffer> {
+        const accessCodeHex = pkt.slice(DATA_START, DATA_START + 10).toString('hex').toUpperCase();
+
+        if (accessCodeHex === '00000000000000000000') {
+            Logger.warn('[AimeDB] LookupEx: all-zero access code rejected');
+            return this.makeLookupExResponse(pkt, null, STATUS_BAN_SYS);
+        }
+
+        Logger.info(`[AimeDB] LookupEx accessCode=${accessCodeHex}`);
+        const result = await FindProfileByAccessCode(accessCodeHex);
+
+        if (result) {
+            Logger.info(`[AimeDB] LookupEx: found aimeId=${result.aimeId}`);
+        } else {
+            Logger.info('[AimeDB] LookupEx: not found');
+        }
+
+        return this.makeLookupExResponse(pkt, result ? result.aimeId : null);
+    }
+
+    private makeLookupExResponse(pkt: Buffer, aimeId: number | null, status: number = STATUS_OK): Buffer {
+        const payload = Buffer.alloc(272, 0);
+        payload.writeInt32LE(aimeId !== null && aimeId >= 0 ? aimeId : -1, 0);
+        payload.writeInt8(0, 4);
+        payload.writeInt32LE(-1, 264);
+        payload.writeInt32LE(-1, 268);
+        return this.makePacket(pkt, CMD_LOOKUP_EX_RESP, payload, status);
+    }
+
+    private async handleFeliCaLookupEx(pkt: Buffer, gameId: string): Promise<Buffer> {
+        const IDM_OFFSET = DATA_START + 16; // 0x30
+        const idmBuf = pkt.slice(IDM_OFFSET, IDM_OFFSET + 8);
+        const idmHex = idmBuf.readBigUInt64BE(0).toString(16).toUpperCase().padStart(16, '0');
+
+        Logger.info(`[AimeDB] FeliCaLookupEx IDm=${idmHex}`);
+
+        if (idmHex === '0000000000000000') {
+            Logger.warn('[AimeDB] FeliCaLookupEx: all-zero IDm rejected');
+            return this.makeFeliCaLookupExResponse(pkt, null, null, STATUS_BAN_SYS);
+        }
+
+        const result = await FindProfileByFeliCa(idmHex);
+
+        if (result) {
+            Logger.info(`[AimeDB] FeliCaLookupEx: found aimeId=${result.aimeId} accessCode=${result.accessCode}`);
+        } else {
+            Logger.info('[AimeDB] FeliCaLookupEx: not found');
+        }
+
+        return this.makeFeliCaLookupExResponse(
+            pkt,
+            result ? result.aimeId : null,
+            result ? result.accessCode : null
+        );
+    }
+
+    private makeFeliCaLookupExResponse(
+        pkt: Buffer,
+        aimeId: number | null,
+        accessCode: string | null,
+        status: number = STATUS_OK
+    ): Buffer {
+        const payload = Buffer.alloc(288, 0);
+        payload.writeInt32LE(aimeId !== null && aimeId >= 0 ? aimeId : -1, 0);
+        payload.writeInt32LE(-1, 4);
+        payload.writeInt32LE(-1, 8);
+
+        if (accessCode) {
+            const acBytes = Buffer.from(accessCode.replace(/\s/g, ''), 'hex');
+            acBytes.copy(payload, 12, 0, Math.min(acBytes.length, 10));
+        }
+
+        payload.writeUInt8(0, 22);
+        payload.writeUInt8(1, 23);
+        return this.makePacket(pkt, CMD_FELICA_LOOKUP_EX_RESP, payload, status);
+    }
+
+    private handleCampaign(pkt: Buffer): Buffer {
+        const protoVer = pkt.readUInt16LE(HDR_PROTO_VER);
+        Logger.info(`[AimeDB] Campaign protoVer=0x${protoVer.toString(16)}`);
+
+        if (protoVer >= PROTO_VER_NEW_CAMPAIGN) {
+            const CAMPAIGN_SIZE = 160;
+            const NUM_CAMPAIGNS = 3;
+            const payload = Buffer.alloc(CAMPAIGN_SIZE * NUM_CAMPAIGNS, 0);
+            return this.makePacket(pkt, CMD_CAMPAIGN_RESP, payload);
+        } else {
+            const payload = Buffer.alloc(16, 0);
+            return this.makePacket(pkt, CMD_CAMPAIGN_RESP, payload);
+        }
+    }
+
+    private handleCampaignClear(pkt: Buffer): Buffer {
+        Logger.info('[AimeDB] CampaignClear');
+        const payload = Buffer.alloc(48, 0);
+        return this.makePacket(pkt, CMD_CAMPAIGN_CLEAR_RESP, payload);
+    }
+
+    private handleStatusLog(pkt: Buffer): Buffer {
+        const aimeId = pkt.length >= DATA_START + 4 ? pkt.readUInt32LE(DATA_START) : 0;
+        const status = pkt.length >= DATA_START + 8 ? pkt.readUInt32LE(DATA_START + 4) : 0;
+        Logger.info(`[AimeDB] StatusLog aimeId=${aimeId} status=${status}`);
+        return this.makeHeader(pkt, CMD_STATUS_LOG_RESP, HDR_SIZE);
+    }
+
+    private handleAimeLog(pkt: Buffer): Buffer {
+        const aimeId = pkt.length >= DATA_START + 4 ? pkt.readUInt32LE(DATA_START) : 0;
+        Logger.info(`[AimeDB] AimeLog aimeId=${aimeId}`);
+        return this.makeHeader(pkt, CMD_AIME_LOG_RESP, HDR_SIZE);
+    }
+
+    private handleAimeLogEx(pkt: Buffer): Buffer {
+        const NUM_LOGS = 20;
+        const NUM_LEN_LOG_EX = 48;
+        const numLogsOffset = DATA_START + (NUM_LEN_LOG_EX * NUM_LOGS);
+        const numLogs = pkt.length > numLogsOffset + 4
+            ? pkt.readUInt32LE(numLogsOffset)
+            : 0;
+
+        Logger.info(`[AimeDB] AimeLogEx numLogs=${numLogs}`);
+
+        const payload = Buffer.alloc(32, 0);
+        for (let i = 0; i < NUM_LOGS; i++) {
+            payload.writeInt8(1, i);
+        }
+
+        return this.makePacket(pkt, CMD_AIME_LOG_EX_RESP, payload);
     }
 }

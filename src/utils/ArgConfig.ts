@@ -174,6 +174,31 @@ function CoreConfig() {
     needRestart: true,
     desc: 'Secondary port to listen for SEGA All.Net and ChuniServlet (Default: 80)',
   });
+
+  CONFIG_MAP['core'].set('sega_hostname', {
+    name: 'SEGA Title Server Hostname',
+    type: 'string',
+    default: '',
+    needRestart: false,
+    desc: 'Hostname or IP sent to cabinets as the title server address in PowerOn. Leave blank to auto-detect from bind address.',
+  });
+
+  CONFIG_MAP['core'].set('aime_port', {
+    name: 'AimeDB Port',
+    type: 'integer',
+    range: [0, 65535],
+    default: 22345,
+    needRestart: true,
+    desc: 'Port for the AimeDB TCP server. segatools intercepts all TCP connections to port 22345 and redirects them to your server, so this must match. (Default: 22345)',
+  });
+
+  CONFIG_MAP['core'].set('require_cabinet_link', {
+    name: 'Require Cabinet Registration',
+    type: 'boolean',
+    default: false,
+    desc: 'Only allow cabinets that have been registered in the cabinet manager to authenticate.',
+  });
+
 }
 CoreConfig();
 

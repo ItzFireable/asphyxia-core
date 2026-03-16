@@ -85,6 +85,19 @@ function Main() {
     next();
   });
 
+  const rawBuffer = express.raw({ type: '*/*', limit: '10mb' });
+  const segaAllnetPaths = [
+    '/sys/', '/net/', '/request', '/report-api/',
+    '/naomitest.html',
+  ];
+  EAMUSE.use((req, res, next) => {
+    if (segaAllnetPaths.some(p => req.url.startsWith(p)) ||
+      /^\/[A-Z]{4}\/\d+\//.test(req.url)) {
+      return rawBuffer(req, res, next);
+    }
+    next();
+  });
+
   EAMUSE.use(SegaRouter(external));
   EAMUSE.use(AllNetRouter(external));
   EAMUSE.use('/static', express.static(path.join(ASSETS_PATH, 'static')));
@@ -105,7 +118,7 @@ function Main() {
 
   // ========== AIME SERVER ========
   const aimeDB = new AimeDBServer();
-  aimeDB.start(22345); // Standard AimeDB port
+  aimeDB.start(CONFIG.aime_port || 22356);
 
   // ========== LISTEN ============
   const cleaned = cleanIP(CONFIG.bind);

@@ -108,8 +108,8 @@ webui.use(flash());
 webui.use(urlencoded({ extended: true, limit: '50mb' }));
 let wrap =
   (fn: RequestHandler) =>
-  (...args: any[]) =>
-    (fn as any)(...args).catch(args[2]);
+    (...args: any[]) =>
+      (fn as any)(...args).catch(args[2]);
 
 // Auth routes (accessible without login)
 webui.get('/login', (req, res) => {
@@ -370,8 +370,8 @@ webui.post(
   '/admin/arcades/create',
   wrap(async (req, res) => {
     if (!req.session.user!.admin) return res.sendStatus(403);
-    const { name, region, country, latitude, longitude } = req.body;
-    
+    const { name, region, country, latitude, longitude, place_id, region_name0, region_name1, region_name2, region_name3 } = req.body;
+
     if (!name || !region || !country) {
       req.flash('formWarn', 'Please fill in required fields.');
       return res.redirect('/admin/arcades');
@@ -382,7 +382,12 @@ webui.post(
       region,
       country,
       parseFloat(latitude) || 0,
-      parseFloat(longitude) || 0
+      parseFloat(longitude) || 0,
+      place_id || '0123',
+      region_name0 || '',
+      region_name1 || '',
+      region_name2 || '',
+      region_name3 || ''
     );
     req.flash('formOk', 'Arcade created successfully.');
     res.redirect('/admin/arcades');
@@ -416,7 +421,7 @@ webui.post(
   wrap(async (req, res) => {
     if (!req.session.user!.admin) return res.sendStatus(403);
     const { pcbid, name, mac } = req.body;
-    
+
     if (!pcbid) {
       req.flash('formWarn', 'PCBID is required.');
       return res.redirect('/admin/cabinets');
@@ -439,11 +444,11 @@ webui.post(
   wrap(async (req, res) => {
     if (!req.session.user!.admin) return res.sendStatus(403);
     const { pcbid, arcade_id, name, mac } = req.body;
-    
+
     if (pcbid) {
       const updatePayload: any = { name, mac };
       if (arcade_id) {
-         updatePayload.arcade_id = arcade_id === 'unlinked' ? null : arcade_id;
+        updatePayload.arcade_id = arcade_id === 'unlinked' ? null : arcade_id;
       }
       await UpdateCabinet(pcbid, updatePayload);
       req.flash('formOk', 'Cabinet updated.');
@@ -472,7 +477,7 @@ webui.get(
     // This is a placeholder for a real leaderboard query which would join against music/score tables
     // from individual game plugins. For now, we render the template.
     // In a real implementation: `const scores = await PluginDB.findAsync({ __v: 'score' }).sort({ score: -1 }).limit(10);`
-    const scores: any[] = []; 
+    const scores: any[] = [];
     res.render('leaderboards', data(req, 'Leaderboards', 'core', { scores }));
   })
 );
@@ -1079,7 +1084,7 @@ webui.post(
         if (customDb?.mdb?.music?.length) {
           mdb.mdb.music = mdb.mdb.music.concat(customDb.mdb.music);
         }
-      } catch {}
+      } catch { }
     }
 
     const medalCoef = [0, 0.5, 1.0, 1.02, 1.04, 1.06, 1.1];
@@ -1706,7 +1711,7 @@ webui.post(
       if (!(await FindCard(cid))) {
         await CreateCard(cid, refid, print);
       }
-    } catch {}
+    } catch { }
 
     try {
       const print = card
@@ -1719,7 +1724,7 @@ webui.post(
       if (cardType(cid) >= 0 && !(await FindCard(cid))) {
         await CreateCard(cid, refid, print);
       }
-    } catch {}
+    } catch { }
 
     res.sendStatus(200);
   })

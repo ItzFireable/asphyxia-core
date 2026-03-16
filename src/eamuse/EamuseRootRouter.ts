@@ -1,5 +1,5 @@
 import { EamuseRouteContainer, EamuseRouteHandler } from './EamuseRouteContainer';
-import { EamusePlugin } from './EamusePlugin';
+import { CorePlugin } from '../CorePlugin';
 import { EamuseInfo } from '../middlewares/EamuseMiddleware';
 import { EamuseSend } from './EamuseSend';
 import { Logger } from '../utils/Logger';
@@ -7,12 +7,12 @@ import { Logger } from '../utils/Logger';
 export class EamuseRootRouter {
   private core: EamuseRouteContainer;
   private pluginMap: {
-    [gameCode: string]: EamusePlugin;
+    [gameCode: string]: CorePlugin;
   };
   private pluginMapID: {
-    [name: string]: EamusePlugin;
+    [name: string]: CorePlugin;
   };
-  private plugins: EamusePlugin[];
+  private plugins: CorePlugin[];
 
   constructor() {
     this.core = new EamuseRouteContainer();
@@ -27,7 +27,7 @@ export class EamuseRootRouter {
     this.core.add(method, handler);
   }
 
-  public plugin(plugins: EamusePlugin[]) {
+  public plugin(plugins: CorePlugin[]) {
     this.plugins = plugins;
     for (const plugin of plugins) {
       for (const code of plugin.GameCodes) {

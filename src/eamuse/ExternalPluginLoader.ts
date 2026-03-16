@@ -40,7 +40,7 @@ import {
   FILE_OPTIONS,
   PluginRegisterFile,
 } from '../utils/ArgConfig';
-import { EamusePlugin, WebUIEventHandler } from './EamusePlugin';
+import { CorePlugin, WebUIEventHandler } from '../CorePlugin';
 import { EamuseRouteHandler } from './EamuseRouteContainer';
 import xml2json from 'fast-xml-parser';
 import _ from 'lodash';
@@ -196,19 +196,23 @@ export function LoadExternalPlugins() {
   };
 
   $.R = {
-    GameCode: () => {},
-    Route: () => {},
-    Unhandled: () => {},
-    Contributor: () => {},
-    Config: () => {},
-    WebUIEvent: () => {},
+    GameCode: () => { },
+    Route: () => { },
+    Unhandled: () => { },
+    Contributor: () => { },
+    Config: () => { },
+    WebUIEvent: () => { },
+    SegaMethodNames: () => { },
+    SegaIterCounts: () => { },
+    SegaVersionMap: () => { },
+    SegaCrypto: () => { },
   };
 
   $.CORE_VERSION = VERSION;
   $.CORE_VERSION_MAJOR = parseInt(VERSION.split('.')[0].substr(1));
   $.CORE_VERSION_MINOR = parseInt(VERSION.split('.')[1]);
 
-  function EnableRegisterNamespace(plugin: EamusePlugin) {
+  function EnableRegisterNamespace(plugin: CorePlugin) {
     $.R.GameCode = (gameCode: string) => {
       plugin.RegisterGameCode(gameCode);
     };
@@ -233,22 +237,34 @@ export function LoadExternalPlugins() {
     $.R.ExtraModuleHandler = (handler: (model: string) => Promise<string[] | string>) => {
       PluginRegisterModules(plugin.Identifier, handler);
     };
+    $.R.SegaMethodNames = (names: string[]) => {
+      plugin.RegisterSegaMethodNames(names);
+    };
+    $.R.SegaIterCounts = (counts: Record<string, number>) => {
+      plugin.RegisterSegaIterCounts(counts);
+    };
+    $.R.SegaVersionMap = (mapFn: (gameCode: string, version: number) => number) => {
+      plugin.RegisterSegaVersionMap(mapFn);
+    };
+    $.R.SegaCrypto = (keys: Record<string, [string, string, string, number?]>) => {
+      plugin.RegisterSegaCrypto(keys);
+    };
   }
 
   function DisableRegisterNamespace() {
-    $.R.GameCode = () => {};
-    $.R.Route = () => {};
-    $.R.Unhandled = () => {};
-    $.R.Contributor = () => {};
-    $.R.Config = () => {};
-    $.R.WebUIEvent = () => {};
+    $.R.GameCode = () => { };
+    $.R.Route = () => { };
+    $.R.Unhandled = () => { };
+    $.R.Contributor = () => { };
+    $.R.Config = () => { };
+    $.R.WebUIEvent = () => { };
   }
 
   if (!ARGS.dev) {
-    $.console.log = () => {};
-    $.console.warn = () => {};
-    $.console.debug = () => {};
-    $.console.info = () => {};
+    $.console.log = () => { };
+    $.console.warn = () => { };
+    $.console.debug = () => { };
+    $.console.info = () => { };
   } else {
     $.console.log = (...msgs: any[]) => {
       const plugin = GetCallerPlugin();
@@ -279,7 +295,7 @@ export function LoadExternalPlugins() {
     }
   };
 
-  const loaded: EamusePlugin[] = [];
+  const loaded: CorePlugin[] = [];
 
   try {
     const plugins = readdirSync(PLUGIN_PATH, {
@@ -315,7 +331,7 @@ export function LoadExternalPlugins() {
     }
 
     for (const { instance, name } of instances) {
-      const plugin = new EamusePlugin(name, instance);
+      const plugin = new CorePlugin(name, instance);
       EnableRegisterNamespace(plugin);
       try {
         plugin.Register();

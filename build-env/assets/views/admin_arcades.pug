@@ -1,0 +1,88 @@
+extends _layout.pug
+
+block head
+  style
+    .
+      .table-wrapper { overflow-x: auto; }
+
+block content
+  .card.has-table
+    header.card-header
+      p.card-header-title
+        span.icon
+          i.mdi.mdi-store-outline
+        span Manage Arcades
+      .card-header-icon
+        button.button.is-primary.is-small(onclick="document.getElementById('modal-add').classList.add('is-active')") Add Arcade
+    .card-content
+      .table-wrapper.has-mobile-cards
+        if arcades && arcades.length > 0
+          table.table.is-fullwidth.is-striped.is-hoverable
+            thead
+              tr
+                th Name
+                th Region
+                th Country
+                th Lat/Long
+                th Actions
+            tbody
+              each arcade in arcades
+                tr
+                  td(data-label="Name") #{arcade.name}
+                  td(data-label="Region") #{arcade.region}
+                  td(data-label="Country") #{arcade.country}
+                  td(data-label="Lat/Long") #{arcade.latitude}, #{arcade.longitude}
+                  td.is-actions-cell
+                    .buttons.is-right
+                      form(action="/admin/arcades/delete" method="post" onsubmit="return confirm('Are you sure you want to delete this arcade?');" style="display:inline;")
+                        input(type="hidden" name="id" value=arcade.id)
+                        button.button.is-small.is-danger(type="submit")
+                          span.icon
+                            i.mdi.mdi-trash-can
+        else
+          section.section
+            .content.has-text-grey.has-text-centered
+              p
+                span.icon.is-large
+                  i.mdi.mdi-emoticon-sad.mdi-48px
+              p No Arcades found.
+
+block modal
+  #modal-add.modal
+    .modal-background(onclick="document.getElementById('modal-add').classList.remove('is-active')")
+    .modal-card
+      header.modal-card-head
+        p.modal-card-title Add Arcade
+        button.delete(aria-label="close" onclick="document.getElementById('modal-add').classList.remove('is-active')")
+      section.modal-card-body
+        form(action="/admin/arcades/create" method="post")
+          .field
+            label.label Name
+            .control.has-icons-left
+              input.input(type="text" name="name" required placeholder="My Arcade")
+              span.icon.is-small.is-left
+                i.mdi.mdi-store
+          .field
+            label.label Region
+            .control.has-icons-left
+              input.input(type="text" name="region" required placeholder="Tokyo")
+              span.icon.is-small.is-left
+                i.mdi.mdi-map-marker
+          .field
+            label.label Country
+            .control.has-icons-left
+              input.input(type="text" name="country" required placeholder="JP")
+              span.icon.is-small.is-left
+                i.mdi.mdi-flag
+          .field
+            label.label Latitude
+            .control
+              input.input(type="number" step="any" name="latitude" value="0")
+          .field
+            label.label Longitude
+            .control
+              input.input(type="number" step="any" name="longitude" value="0")
+          hr
+          .field.is-grouped.is-grouped-right
+            .control
+              button.button.is-primary(type="submit") Create

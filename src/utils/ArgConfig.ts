@@ -165,6 +165,15 @@ function CoreConfig() {
     default: '',
     desc: 'OAuth Client Secret for Kamaitachi integration',
   });
+
+  CONFIG_MAP['core'].set('sega_port', {
+    name: 'SEGA All.Net Port',
+    type: 'integer',
+    range: [0, 65535],
+    default: 80,
+    needRestart: true,
+    desc: 'Secondary port to listen for SEGA All.Net and ChuniServlet (Default: 80)',
+  });
 }
 CoreConfig();
 

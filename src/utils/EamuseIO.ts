@@ -586,6 +586,124 @@ export async function FindUserByUsername(username: string) {
   }
 }
 
+// =========================================
+//            Arcades & Cabinets
+// =========================================
+
+export async function CreateArcade(name: string, region: string, country: string, latitude: number, longitude: number) {
+  try {
+    const id = ID_GEN.encode(Date.now());
+    return await CoreDB.insertAsync({
+      __s: 'arcade',
+      id,
+      name,
+      region,
+      country,
+      latitude,
+      longitude
+    });
+  } catch (err) {
+    Logger.error(err);
+    return null;
+  }
+}
+
+export async function GetAllArcades(): Promise<any[]> {
+  try {
+    return await CoreDB.findAsync<any>({ __s: 'arcade' }).sort({ createdAt: 1 }).execAsync();
+  } catch (err) {
+    Logger.error(err);
+    return [];
+  }
+}
+
+export async function FindArcade(id: string) {
+  try {
+    return await CoreDB.findOneAsync<any>({ __s: 'arcade', id });
+  } catch (err) {
+    Logger.error(err);
+    return null;
+  }
+}
+
+export async function UpdateArcade(id: string, update: any) {
+  try {
+    await CoreDB.updateAsync({ __s: 'arcade', id }, { $set: update });
+    return true;
+  } catch (err) {
+    Logger.error(err);
+    return false;
+  }
+}
+
+export async function DeleteArcade(id: string) {
+  try {
+    await CoreDB.removeAsync({ __s: 'arcade', id }, {});
+    // Optionally remove or unlink associated cabinets
+    await CoreDB.updateAsync({ __s: 'cabinet', arcade_id: id }, { $unset: { arcade_id: true } }, { multi: true });
+    return true;
+  } catch (err) {
+    Logger.error(err);
+    return false;
+  }
+}
+
+export async function CreateCabinet(pcbid: string, name: string, mac: string = '') {
+  try {
+    const existing = await CoreDB.findOneAsync<any>({ __s: 'cabinet', pcbid });
+    if (existing) return existing;
+
+    return await CoreDB.insertAsync({
+      __s: 'cabinet',
+      pcbid,
+      name,
+      mac,
+      arcade_id: null
+    });
+  } catch (err) {
+    Logger.error(err);
+    return null;
+  }
+}
+
+export async function GetAllCabinets(): Promise<any[]> {
+  try {
+    return await CoreDB.findAsync<any>({ __s: 'cabinet' }).sort({ createdAt: 1 }).execAsync();
+  } catch (err) {
+    Logger.error(err);
+    return [];
+  }
+}
+
+export async function FindCabinet(pcbid: string) {
+  try {
+    return await CoreDB.findOneAsync<any>({ __s: 'cabinet', pcbid });
+  } catch (err) {
+    Logger.error(err);
+    return null;
+  }
+}
+
+export async function UpdateCabinet(pcbid: string, update: any) {
+  try {
+    await CoreDB.updateAsync({ __s: 'cabinet', pcbid }, { $set: update });
+    return true;
+  } catch (err) {
+    Logger.error(err);
+    return false;
+  }
+}
+
+export async function DeleteCabinet(pcbid: string) {
+  try {
+    await CoreDB.removeAsync({ __s: 'cabinet', pcbid }, {});
+    return true;
+  } catch (err) {
+    Logger.error(err);
+    return false;
+  }
+}
+
 export async function FindUserByCardNumber(cardNumber: string) {
   try {
     return await CoreDB.findOneAsync<any>({ __s: 'user_account', cardNumber });

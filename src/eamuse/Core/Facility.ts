@@ -2,18 +2,38 @@ import { ip2int, kitem } from '../../utils/KBinJSON';
 import { VERSION } from '../../utils/Consts';
 import { EamuseRouteContainer } from '../EamuseRouteContainer';
 import { CONFIG } from '../../utils/ArgConfig';
+import { FindCabinet, FindArcade } from '../../utils/EamuseIO';
 
 export const facility = new EamuseRouteContainer();
 
 facility.add('facility.get', async (info, data, send) => {
   const port = CONFIG.matching_port;
-  const tag = CONFIG.server_tag || 'CORE';
+  let tag = CONFIG.server_tag || 'CORE';
+
+  let regionStr = 'JP-13';
+  let countryStr = 'JP';
+
+  if ((info as any).pcbid) {
+    const cabinet = await FindCabinet((info as any).pcbid);
+    if (cabinet && cabinet.arcade_id) {
+      const arcade = await FindArcade(cabinet.arcade_id);
+      if (arcade) {
+        regionStr = arcade.region || '1';
+        // If admin entered JP-13, we standardize it to 13
+        if (!regionStr.startsWith('JP-') && !regionStr.startsWith('US-')) {
+          regionStr = 'JP-' + regionStr;
+        }
+        countryStr = arcade.country || 'JP';
+        tag = arcade.name || tag;
+      }
+    }
+  }
 
   const result = {
     location: {
       id: kitem('str', 'ea'),
-      country: kitem('str', 'JP'),
-      region: kitem('str', '1'),
+      country: kitem('str', countryStr),
+      region: kitem('str', regionStr),
       name: kitem('str', tag),
       type: kitem('u8', 0),
       countryname: kitem('str', 'UNKNOWN'),

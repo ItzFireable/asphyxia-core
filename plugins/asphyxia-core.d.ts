@@ -415,6 +415,26 @@ declare namespace R {
   function ExtraModuleHandler(
     handler: (model: string) => Promise<string[] | string> | string[] | string
   ): void;
+
+  /**
+   * Register a list of valid method names for SEGA games.
+   */
+  function SegaMethodNames(names: string[]): void;
+
+  /**
+   * Register PBKDF2 iteration counts for SEGA internal versions.
+   */
+  function SegaIterCounts(counts: { [key: string]: number }): void;
+
+  /**
+   * Register a function to map a game code and version to an internal version index.
+   */
+  function SegaVersionMap(mapFn: (gameCode: string, version: number) => number): void;
+
+  /**
+   * Register crypto keys [AES Key, AES IV, Salt, IterOverride?] for SEGA internal versions.
+   */
+  function SegaCrypto(keys: { [key: string]: [string, string, string, number?] }): void;
 }
 
 /**

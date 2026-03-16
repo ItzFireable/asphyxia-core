@@ -15,6 +15,8 @@ import { Logger } from '../utils/Logger';
 import { EamuseSend } from '../eamuse/EamuseSend';
 import { dataToXML } from '../utils/KBinJSON';
 import { EamuseRootRouter } from '../eamuse/EamuseRootRouter';
+import { FindCabinet } from '../utils/EamuseIO';
+import { CONFIG } from '../utils/ArgConfig';
 
 // const ACCEPT_AGENTS = ['EAMUSE.XRPC/1.0', 'EAMUSE.Httpac/1.0'];
 
@@ -160,9 +162,38 @@ export const EamuseRoute = (router: EamuseRootRouter): RequestHandler => {
 
     const gameCode = body.model.split(':')[0];
 
+    // --- PCBID Verification ---
+    // Extract PCBID. Often it's passed in x-eamuse-info as a string starting with the PCBID.
+    // e.g., "1-xxxx-xxxx-xxxx..." or similar formats depending on game.
+    // Spice2x also sometimes passes it, or it can be derived. 
+    // We'll extract a best effort from headers or just allow if we can't find it strictly.
+    const rawInfo = req.headers['x-eamuse-info'];
+    let pcbid = '';
+    if (rawInfo && typeof rawInfo === 'string') {
+        // usually format is version-pcbid-mac-etc
+        const parts = rawInfo.split('-');
+        if (parts.length >= 2) pcbid = parts[1];
+    }
+
+    if (CONFIG.require_cabinet_link && pcbid) {
+       const cabinet = await FindCabinet(pcbid);
+       if (!cabinet) {
+         Logger.warn(`Rejected connection from unknown cabinet PCBID: ${pcbid}`);
+         // Return immediately, blocking further processing.
+         const send = new EamuseSend(body, res);
+         return send.object({}, { status: 1 }); // generic error
+       }
+       if (CONFIG.require_arcade_link && !cabinet.arcade_id) {
+         Logger.warn(`Rejected connection from unlinked cabinet PCBID: ${pcbid}`);
+         const send = new EamuseSend(body, res);
+         return send.object({}, { status: 1 });
+       }
+    }
+    // --------------------------
+
     const send = new EamuseSend(body, res);
     const data = get(body.data, `call.${body.module}`);
-    const info = { gameCode, module: body.module, method: body.method, model: body.model };
+    const info = { gameCode, module: body.module, method: body.method, model: body.model, pcbid };
 
     // HACK: give facility ip
     if (body.module == 'facility' && body.method == 'get') {

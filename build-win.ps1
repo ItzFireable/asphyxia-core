@@ -43,8 +43,8 @@ Write-Output "Packing binaries"
 
 # Packing x64
 npx pkg .\build-env -t "node16.16.0-win-x64" -o .\build\asphyxia-core-x64 --options no-warnings
-Compress-Archive -Path ".\build\asphyxia-core-x64.exe", ".\plugins" -DestinationPath ".\build\asphyxia-core-win-x64.zip" -Force
+# Compress-Archive -Path ".\build\asphyxia-core-x64.exe", ".\plugins" -DestinationPath ".\build\asphyxia-core-win-x64.zip" -Force
 
 # Packing x86
 npx pkg .\build-env -t "node16.16.0-win-x86" -o .\build\asphyxia-core-x86 --options no-warnings
-Compress-Archive -Path ".\build\asphyxia-core-x86.exe", ".\plugins" -DestinationPath ".\build\asphyxia-core-win-x86.zip" -Force
+# Compress-Archive -Path ".\build\asphyxia-core-x86.exe", ".\plugins" -DestinationPath ".\build\asphyxia-core-win-x86.zip" -Force

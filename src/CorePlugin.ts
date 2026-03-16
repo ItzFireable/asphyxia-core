@@ -1,16 +1,16 @@
-import { EamuseRouteHandler } from './EamuseRouteContainer';
-import { EamuseInfo } from '../middlewares/EamuseMiddleware';
-import { EamuseSend } from './EamuseSend';
+import { EamuseRouteHandler } from './eamuse/EamuseRouteContainer';
+import { EamuseInfo } from './middlewares/EamuseMiddleware';
+import { EamuseSend } from './eamuse/EamuseSend';
 import { isNil } from 'lodash';
-import { Logger } from '../utils/Logger';
-import { PLUGIN_PATH, APIFindOne, APIFind } from '../utils/EamuseIO';
+import { Logger } from './utils/Logger';
+import { PLUGIN_PATH, APIFindOne, APIFind } from './utils/EamuseIO';
 import path from 'path';
 import { readdirSync, readFileSync } from 'fs';
-import { FindCard, CreateProfile, CreateCard, BindProfile } from '../utils/EamuseIO';
+import { FindCard, CreateProfile, CreateCard, BindProfile } from './utils/EamuseIO';
 
 import { compile } from 'pug';
-import { CONFIG } from '../utils/ArgConfig';
-import { nfc2card } from '../utils/CardCipher';
+import { CONFIG } from './utils/ArgConfig';
+import { nfc2card } from './utils/CardCipher';
 
 async function cardSanitizer(gameCode: string, str: string, refMap: any): Promise<string> {
   const regex =
@@ -94,7 +94,7 @@ export type WebUISend = {
 };
 export type WebUIEventHandler = (data: any, send: WebUISend) => Promise<void>;
 
-export class EamusePlugin {
+export class CorePlugin {
   private pluginName: string;
   private pluginIdentifier: string;
   private gameCodes: string[];
@@ -120,6 +120,12 @@ export class EamusePlugin {
   };
 
   private instance: any;
+
+  // SEGA Metadata
+  private segaMethodNames: string[] = [];
+  private segaIterCounts: Record<string, number> = {};
+  private segaVersionMap: (gameCode: string, version: number) => number = null;
+  private segaCryptoKeys: Record<string, [string, string, string, number?]> = {};
 
   constructor(folderName: string, instance: any) {
     this.instance = instance;
@@ -154,7 +160,7 @@ export class EamusePlugin {
         .map(f => path.basename(f.name, '.pug'))
         .sort();
       this.CompilePages();
-    } catch {}
+    } catch { }
   }
 
   public Register() {
@@ -162,7 +168,7 @@ export class EamusePlugin {
   }
 
   private ExpressionCheck(isProfile: boolean, expression: string) {
-    const nothingFunc = () => {};
+    const nothingFunc = () => { };
 
     const DB = {
       FindOne: nothingFunc,
@@ -247,6 +253,38 @@ export class EamusePlugin {
     } else {
       this.unhandled = true;
     }
+  }
+
+  public RegisterSegaMethodNames(names: string[]) {
+    this.segaMethodNames = names;
+  }
+
+  public RegisterSegaIterCounts(counts: Record<string, number>) {
+    this.segaIterCounts = counts;
+  }
+
+  public RegisterSegaVersionMap(mapFn: (gameCode: string, version: number) => number) {
+    this.segaVersionMap = mapFn;
+  }
+
+  public RegisterSegaCrypto(keys: Record<string, [string, string, string, number?]>) {
+    this.segaCryptoKeys = keys;
+  }
+
+  public get SegaMethodNames() {
+    return this.segaMethodNames;
+  }
+
+  public get SegaIterCounts() {
+    return this.segaIterCounts;
+  }
+
+  public get SegaVersionMap() {
+    return this.segaVersionMap;
+  }
+
+  public get SegaCryptoKeys() {
+    return this.segaCryptoKeys;
   }
 
   public get Pages() {
@@ -339,6 +377,30 @@ export class EamusePlugin {
     }
 
     return true;
+  }
+
+  public async runSega(
+    gameCode: string,
+    method: string,
+    data: any
+  ): Promise<any> {
+    if (this.instance && typeof this.instance[method] === 'function') {
+      try {
+        return await this.instance[method](data);
+      } catch (err) {
+        Logger.error(`Error in Sega handler ${method}:`, { plugin: this.pluginIdentifier });
+        Logger.error(err);
+        return { returnCode: -1 };
+      }
+    }
+
+    // If we have a generic handleSega method
+    if (this.instance && typeof this.instance.handleSega === 'function') {
+      return await this.instance.handleSega(gameCode, method, data);
+    }
+
+    Logger.warn(`No handler for Sega method ${method} in plugin ${this.pluginIdentifier}`);
+    return { returnCode: 1 }; // Default success to not break game
   }
 
   public get GameCodes() {

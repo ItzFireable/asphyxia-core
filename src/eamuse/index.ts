@@ -2,7 +2,7 @@ import { Router } from 'express';
 
 import { EamuseMiddleware, EamuseRoute } from '../middlewares/EamuseMiddleware';
 import { core } from './Core';
-import { EamusePlugin } from './EamusePlugin';
+import { CorePlugin } from '../CorePlugin';
 import { EamuseRootRouter } from './EamuseRootRouter';
 import { Logger } from '../utils/Logger';
 import { CONFIG } from '../utils/ArgConfig';
@@ -21,7 +21,7 @@ export function PluginRegisterModules(
   MODULE_HANDLERS[plugin] = moduleHandler;
 }
 
-export const services = (port: number, plugins: EamusePlugin[]) => {
+export const services = (port: number, plugins: CorePlugin[]) => {
   if (initialized) {
     Logger.warn(`Only one service can be handled.`);
     return;

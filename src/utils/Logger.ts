@@ -1,7 +1,7 @@
 import winston from 'winston';
 import chalk from 'chalk';
 
-const isDebug = (process as any).pkg == null;
+const isDebug = (process as any).pkg == null || process.argv.includes('--dev');
 
 export const Logger = winston.createLogger({
   level: isDebug ? 'debug' : 'info',

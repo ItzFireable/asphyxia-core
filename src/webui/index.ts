@@ -46,6 +46,16 @@ import {
   SetUserAdmin,
   FindUserByUsername,
   FindUserByCardNumber,
+  CreateArcade,
+  GetAllArcades,
+  FindArcade,
+  UpdateArcade,
+  DeleteArcade,
+  CreateCabinet,
+  GetAllCabinets,
+  FindCabinet,
+  UpdateCabinet,
+  DeleteCabinet,
   SaveTachiToken,
   GetTachiToken,
   DeleteTachiToken,
@@ -82,6 +92,7 @@ declare module 'express-session' {
 }
 
 export const webui = Router();
+
 webui.use(
   session({
     cookie: { maxAge: 86400000, sameSite: true },
@@ -342,6 +353,127 @@ webui.post(
       await SetUserAdmin(username, !target.admin);
     }
     res.redirect('/users');
+  })
+);
+
+// Arcade Management (admin only)
+webui.get(
+  '/admin/arcades',
+  wrap(async (req, res) => {
+    if (!req.session.user!.admin) return res.redirect('/');
+    const arcades = await GetAllArcades();
+    res.render('admin_arcades', data(req, 'Arcades', 'core', { arcades }));
+  })
+);
+
+webui.post(
+  '/admin/arcades/create',
+  wrap(async (req, res) => {
+    if (!req.session.user!.admin) return res.sendStatus(403);
+    const { name, region, country, latitude, longitude } = req.body;
+    
+    if (!name || !region || !country) {
+      req.flash('formWarn', 'Please fill in required fields.');
+      return res.redirect('/admin/arcades');
+    }
+
+    await CreateArcade(
+      name,
+      region,
+      country,
+      parseFloat(latitude) || 0,
+      parseFloat(longitude) || 0
+    );
+    req.flash('formOk', 'Arcade created successfully.');
+    res.redirect('/admin/arcades');
+  })
+);
+
+webui.post(
+  '/admin/arcades/delete',
+  wrap(async (req, res) => {
+    if (!req.session.user!.admin) return res.sendStatus(403);
+    const { id } = req.body;
+    if (id) await DeleteArcade(id);
+    req.flash('formOk', 'Arcade deleted.');
+    res.redirect('/admin/arcades');
+  })
+);
+
+// Cabinet Management (admin only)
+webui.get(
+  '/admin/cabinets',
+  wrap(async (req, res) => {
+    if (!req.session.user!.admin) return res.redirect('/');
+    const cabinets = await GetAllCabinets();
+    const arcades = await GetAllArcades();
+    res.render('admin_cabinets', data(req, 'Cabinets', 'core', { cabinets, arcades }));
+  })
+);
+
+webui.post(
+  '/admin/cabinets/create',
+  wrap(async (req, res) => {
+    if (!req.session.user!.admin) return res.sendStatus(403);
+    const { pcbid, name, mac } = req.body;
+    
+    if (!pcbid) {
+      req.flash('formWarn', 'PCBID is required.');
+      return res.redirect('/admin/cabinets');
+    }
+
+    const existing = await FindCabinet(pcbid);
+    if (existing) {
+      req.flash('formWarn', 'Cabinet with this PCBID already exists.');
+      return res.redirect('/admin/cabinets');
+    }
+
+    await CreateCabinet(pcbid, name || 'Unknown Cabinet', mac || '');
+    req.flash('formOk', 'Cabinet registered.');
+    res.redirect('/admin/cabinets');
+  })
+);
+
+webui.post(
+  '/admin/cabinets/update',
+  wrap(async (req, res) => {
+    if (!req.session.user!.admin) return res.sendStatus(403);
+    const { pcbid, arcade_id, name, mac } = req.body;
+    
+    if (pcbid) {
+      const updatePayload: any = { name, mac };
+      if (arcade_id) {
+         updatePayload.arcade_id = arcade_id === 'unlinked' ? null : arcade_id;
+      }
+      await UpdateCabinet(pcbid, updatePayload);
+      req.flash('formOk', 'Cabinet updated.');
+    }
+    res.redirect('/admin/cabinets');
+  })
+);
+
+webui.post(
+  '/admin/cabinets/delete',
+  wrap(async (req, res) => {
+    if (!req.session.user!.admin) return res.sendStatus(403);
+    const { pcbid } = req.body;
+    if (pcbid) await DeleteCabinet(pcbid);
+    req.flash('formOk', 'Cabinet deleted.');
+    res.redirect('/admin/cabinets');
+  })
+);
+
+
+
+// Leaderboards
+webui.get(
+  '/leaderboards',
+  wrap(async (req, res) => {
+    // This is a placeholder for a real leaderboard query which would join against music/score tables
+    // from individual game plugins. For now, we render the template.
+    // In a real implementation: `const scores = await PluginDB.findAsync({ __v: 'score' }).sort({ score: -1 }).limit(10);`
+    const scores: any[] = []; 
+    res.render('leaderboards', data(req, 'Leaderboards', 'core', { scores }));
   })
 );
 

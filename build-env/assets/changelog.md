@@ -1,5 +1,20 @@
 ## Fork
 
+## v1.61a
+
+### Core - AllNet Support
+- **CORE**: Added AllNet servlet handlers for PowerOn, Check, Report, and Download
+- **CORE**: Added support for DFI (Debug Firmware Interface) header detection
+- **CORE**: Added dynamic arcade information retrieval from database (name, region, country)
+- **CORE**: Added automatic cabinet registration on first PowerOn
+- **CORE**: Added base URI construction for game servlets
+- **CORE**: Added response compression and base64 encoding for AllNet
+- **CORE**: Added proper header handling for DFI responses
+
+### Core - Arcade & Cabinet Management
+- **CORE**: Added arcade and cabinet management system
+- **CORE**: Added support for multiple cabinets per arcade
+
 ### Core - Authentication & Access Control
 - **CORE**: Added user authentication system (signup, login, account management)
 - **CORE**: Added admin role with user management capabilities

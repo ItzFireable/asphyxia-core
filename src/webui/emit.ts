@@ -5,7 +5,7 @@ import { Logger } from '../utils/Logger';
 import multer from 'multer';
 import { WriteFile, DeleteFile, Resolve, FindCardsByRefid } from '../utils/EamuseIO';
 import { DATAFILE_MAP } from '../utils/ArgConfig';
-import { WebUISend } from '../eamuse/EamusePlugin';
+import { CorePlugin, WebUISend } from '../CorePlugin';
 
 export const ajax = Router();
 

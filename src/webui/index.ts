@@ -1,80 +1,27 @@
-import { Router, RequestHandler, Request } from 'express';
-import { existsSync, readFileSync } from 'fs';
-import session from 'express-session';
-import cookies from 'cookie-parser';
-import createMemoryStore from 'memorystore';
+import {json, urlencoded} from 'body-parser';
 import flash from 'connect-flash';
-import { VERSION } from '../utils/Consts';
-import {
-  CONFIG_MAP,
-  CONFIG_DATA,
-  CONFIG,
-  CONFIG_OPTIONS,
-  SaveConfig,
-  ARGS,
-  DATAFILE_MAP,
-  FILE_CHECK,
-} from '../utils/ArgConfig';
-import { get, isEmpty } from 'lodash';
-import { Converter } from 'showdown';
-import {
-  ReadAssets,
-  PLUGIN_PATH,
-  GetProfileCount,
-  GetProfiles,
-  FindCardsByRefid,
-  Count,
-  FindProfile,
-  PurgeProfile,
-  UpdateProfile,
-  CreateCard,
-  FindCard,
-  DeleteCard,
-  APIFind,
-  APIRemove,
-  PluginStats,
-  PurgePlugin,
-  APIFindOne,
-  APIInsert,
-  APIUpdate,
-  APIUpsert,
-  APICount,
-  CreateUserAccount,
-  AuthenticateUser,
-  UpdateUserAccount,
-  GetAllUsers,
-  SetUserAdmin,
-  FindUserByUsername,
-  FindUserByCardNumber,
-  CreateArcade,
-  GetAllArcades,
-  FindArcade,
-  UpdateArcade,
-  DeleteArcade,
-  CreateCabinet,
-  GetAllCabinets,
-  FindCabinet,
-  UpdateCabinet,
-  DeleteCabinet,
-  SaveTachiToken,
-  GetTachiToken,
-  DeleteTachiToken,
-  SaveTachiExportTimestamp,
-  GetTachiExportTimestamp,
-  SaveTachiAutoExport,
-  GetTachiAutoExport,
-} from '../utils/EamuseIO';
-import { urlencoded, json } from 'body-parser';
+import cookies from 'cookie-parser';
+import {Request, RequestHandler, Router} from 'express';
+import session from 'express-session';
+import {existsSync, readFileSync} from 'fs';
+import {get, groupBy, isEmpty, lowerCase, startCase, upperFirst} from 'lodash';
+import createMemoryStore from 'memorystore';
 import path from 'path';
-import { ROOT_CONTAINER } from '../eamuse/index';
-import { fun } from './fun';
-import { card2nfc, nfc2card, cardType } from '../utils/CardCipher';
-import { groupBy, startCase, lowerCase, upperFirst } from 'lodash';
-import { sizeof } from 'sizeof';
-import { ajax as emit } from './emit';
-import { Logger } from '../utils/Logger';
+import {Converter} from 'showdown';
+
+import {ROOT_CONTAINER} from '../eamuse/index';
+import {ARGS, CONFIG, CONFIG_DATA, CONFIG_MAP, CONFIG_OPTIONS, DATAFILE_MAP, FILE_CHECK, SaveConfig,} from '../utils/ArgConfig';
+import {card2nfc, cardType, nfc2card} from '../utils/CardCipher';
+import {VERSION} from '../utils/Consts';
+import {APICount, APIFind, APIFindOne, APIInsert, APIRemove, APIUpdate, APIUpsert, AuthenticateUser, Count, CreateArcade, CreateCabinet, CreateCard, CreateUserAccount, DeleteArcade, DeleteCabinet, DeleteCard, DeleteTachiToken, FindArcade, FindCabinet, FindCard, FindCardsByRefid, FindProfile, FindUserByCardNumber, FindUserByUsername, GetAllArcades, GetAllCabinets, GetAllUsers, GetProfileCount, GetProfiles, GetTachiAutoExport, GetTachiExportTimestamp, GetTachiToken, PLUGIN_PATH, PluginStats, PurgePlugin, PurgeProfile, ReadAssets, SaveTachiAutoExport, SaveTachiExportTimestamp, SaveTachiToken, SetUserAdmin, UpdateArcade, UpdateCabinet, UpdateProfile, UpdateUserAccount,} from '../utils/EamuseIO';
+
+import {fun} from './fun';
+
+import {sizeof} from 'sizeof';
+import {ajax as emit} from './emit';
+import {Logger} from '../utils/Logger';
 import archiver from 'archiver';
-const { serialize: nedbSerialize } = require('@seald-io/nedb/lib/model.js');
+const {serialize: nedbSerialize} = require('@seald-io/nedb/lib/model.js');
 
 const memorystore = createMemoryStore(session);
 
@@ -87,152 +34,147 @@ const ADMIN_ONLY_PAGES = [
 
 declare module 'express-session' {
   interface SessionData {
-    user?: { username: string; cardNumber: string; admin: boolean };
+    user?: {username: string; cardNumber: string; admin: boolean};
   }
 }
 
 export const webui = Router();
 
-webui.use(
-  session({
-    cookie: { maxAge: 86400000, sameSite: true },
-    secret: 'c0dedeadc0debeef',
-    resave: true,
-    saveUninitialized: false,
-    store: new memorystore({ checkPeriod: 86400000 }),
-  })
-);
+webui.use(session({
+  cookie: {maxAge: 86400000, sameSite: true},
+  secret: 'c0dedeadc0debeef',
+  resave: true,
+  saveUninitialized: false,
+  store: new memorystore({checkPeriod: 86400000}),
+}));
 webui.use(cookies());
 
 webui.use(flash());
-webui.use(urlencoded({ extended: true, limit: '50mb' }));
-let wrap =
-  (fn: RequestHandler) =>
-    (...args: any[]) =>
-      (fn as any)(...args).catch(args[2]);
+webui.use(urlencoded({extended: true, limit: '50mb'}));
+let wrap = (fn: RequestHandler) => (...args: any[]) =>
+    (fn as any)(...args).catch(args[2]);
 
 // Auth routes (accessible without login)
 webui.get('/login', (req, res) => {
   if (req.session.user) return res.redirect('/');
-  res.render('login', { error: req.flash('authError')[0] || null });
+  res.render('login', {error: req.flash('authError')[0] || null});
 });
 
-webui.post(
-  '/login',
-  wrap(async (req, res) => {
-    const { username, password } = req.body;
-    if (!username || !password) {
-      req.flash('authError', 'Please fill in all fields.');
-      return res.redirect('/login');
-    }
+webui.post('/login', wrap(async (req, res) => {
+             const {username, password} = req.body;
+             if (!username || !password) {
+               req.flash('authError', 'Please fill in all fields.');
+               return res.redirect('/login');
+             }
 
-    const user = await AuthenticateUser(username, password);
-    if (!user) {
-      req.flash('authError', 'Invalid username or password.');
-      return res.redirect('/login');
-    }
+             const user = await AuthenticateUser(username, password);
+             if (!user) {
+               req.flash('authError', 'Invalid username or password.');
+               return res.redirect('/login');
+             }
 
-    req.session.user = {
-      username: user.username,
-      cardNumber: user.cardNumber,
-      admin: user.admin || false,
-    };
-    res.redirect('/');
-  })
-);
+             req.session.user = {
+               username: user.username,
+               cardNumber: user.cardNumber,
+               admin: user.admin || false,
+             };
+             res.redirect('/');
+           }));
 
 webui.get('/signup', (req, res) => {
   if (req.session.user) return res.redirect('/');
-  res.render('signup', { error: req.flash('authError')[0] || null, old: {} });
+  res.render('signup', {error: req.flash('authError')[0] || null, old: {}});
 });
 
 webui.post(
-  '/signup',
-  wrap(async (req, res) => {
-    const { username, password, confirmPassword, cardNumber } = req.body;
-    const old = { username, cardNumber, password, confirmPassword };
+    '/signup', wrap(async (req, res) => {
+      const {username, password, confirmPassword, cardNumber} = req.body;
+      const old = {username, cardNumber, password, confirmPassword};
 
-    if (!username || !password || !confirmPassword || !cardNumber) {
-      return res.render('signup', { error: 'Please fill in all fields.', old });
-    }
-
-    if (password !== confirmPassword) {
-      return res.render('signup', { error: 'Passwords do not match.', old });
-    }
-
-    if (username.length < 3) {
-      return res.render('signup', { error: 'Username must be at least 3 characters.', old });
-    }
-
-    if (password.length < 4) {
-      return res.render('signup', { error: 'Password must be at least 4 characters.', old });
-    }
-
-    // Normalize: strip spaces/dashes, uppercase
-    const normalized = cardNumber.replace(/[\s\-]/g, '').toUpperCase();
-
-    // Determine NFC ID: if it looks like a hex NFC ID (16 hex chars), use directly;
-    // otherwise treat as printed card number and convert to NFC ID
-    let nfcId: string;
-    try {
-      if (/^[0-9A-F]{16}$/.test(normalized) && cardType(normalized) >= 0) {
-        nfcId = normalized;
-      } else {
-        nfcId = card2nfc(normalized);
+      if (!username || !password || !confirmPassword || !cardNumber) {
+        return res.render('signup', {error: 'Please fill in all fields.', old});
       }
-    } catch {
-      return res.render('signup', {
-        error: 'Invalid card number format.',
-        old,
-      });
-    }
 
-    const card = await FindCard(nfcId);
-    if (!card) {
-      return res.render('signup', {
-        error: 'Card number not found. You must have a registered card to sign up.',
-        old,
-      });
-    }
+      if (password !== confirmPassword) {
+        return res.render('signup', {error: 'Passwords do not match.', old});
+      }
 
-    // Check if this card (or any other card on the same profile) is already owned by a user account
-    if (card.__refid) {
-      const profileCards = await FindCardsByRefid(card.__refid);
-      if (profileCards && Array.isArray(profileCards)) {
-        for (const c of profileCards) {
-          const owner = await FindUserByCardNumber(c.cid);
-          if (owner) {
-            return res.render('signup', {
-              error: 'This card number is already registered to an account.',
-              old,
-            });
-          }
+      if (username.length < 3) {
+        return res.render(
+            'signup', {error: 'Username must be at least 3 characters.', old});
+      }
+
+      if (password.length < 4) {
+        return res.render(
+            'signup', {error: 'Password must be at least 4 characters.', old});
+      }
+
+      // Normalize: strip spaces/dashes, uppercase
+      const normalized = cardNumber.replace(/[\s\-]/g, '').toUpperCase();
+
+      // Determine NFC ID: if it looks like a hex NFC ID (16 hex chars), use
+      // directly; otherwise treat as printed card number and convert to NFC ID
+      let nfcId: string;
+      try {
+        if (/^[0-9A-F]{16}$/.test(normalized) && cardType(normalized) >= 0) {
+          nfcId = normalized;
+        } else {
+          nfcId = card2nfc(normalized);
         }
-      }
-    } else {
-      const existingAccount = await FindUserByCardNumber(nfcId);
-      if (existingAccount) {
+      } catch {
         return res.render('signup', {
-          error: 'This card number is already registered to an account.',
+          error: 'Invalid card number format.',
           old,
         });
       }
-    }
 
-    const account = await CreateUserAccount(username, password, nfcId);
-    if (!account) {
-      return res.render('signup', { error: 'Username already exists.', old });
-    }
+      const card = await FindCard(nfcId);
+      if (!card) {
+        return res.render('signup', {
+          error:
+              'Card number not found. You must have a registered card to sign up.',
+          old,
+        });
+      }
 
-    // Update the profile name to match the signup username
-    if (card.__refid) {
-      await UpdateProfile(card.__refid, { name: username });
-    }
+      // Check if this card (or any other card on the same profile) is already
+      // owned by a user account
+      if (card.__refid) {
+        const profileCards = await FindCardsByRefid(card.__refid);
+        if (profileCards && Array.isArray(profileCards)) {
+          for (const c of profileCards) {
+            const owner = await FindUserByCardNumber(c.cid);
+            if (owner) {
+              return res.render('signup', {
+                error: 'This card number is already registered to an account.',
+                old,
+              });
+            }
+          }
+        }
+      } else {
+        const existingAccount = await FindUserByCardNumber(nfcId);
+        if (existingAccount) {
+          return res.render('signup', {
+            error: 'This card number is already registered to an account.',
+            old,
+          });
+        }
+      }
 
-    req.session.user = { username, cardNumber: nfcId, admin: false };
-    res.redirect('/');
-  })
-);
+      const account = await CreateUserAccount(username, password, nfcId);
+      if (!account) {
+        return res.render('signup', {error: 'Username already exists.', old});
+      }
+
+      // Update the profile name to match the signup username
+      if (card.__refid) {
+        await UpdateProfile(card.__refid, {name: username});
+      }
+
+      req.session.user = {username, cardNumber: nfcId, admin: false};
+      res.redirect('/');
+    }));
 
 webui.get('/logout', (req, res) => {
   req.session.destroy(() => {
@@ -247,10 +189,11 @@ webui.get('/help/card-number', (_req, res) => {
 
 // Tachi config endpoint (before auth middleware - needed by client-side JS)
 webui.get('/tachi/config', (_req, res) => {
-  res.json({ clientId: CONFIG.tachi_client_id || '' });
+  res.json({clientId: CONFIG.tachi_client_id || ''});
 });
 
-// Tachi OAuth callback (before auth middleware - opened in popup without session)
+// Tachi OAuth callback (before auth middleware - opened in popup without
+// session)
 webui.get('/tachi/callback', (req, res) => {
   const code = req.query.code as string;
   if (!code) return res.status(400).send('Missing authorization code');
@@ -277,842 +220,793 @@ webui.use((req, res, next) => {
 });
 
 // Account settings
-webui.get(
-  '/account',
-  wrap(async (req, res) => {
-    res.render('account', data(req, 'Account', 'core'));
-  })
-);
+webui.get('/account', wrap(async (req, res) => {
+            res.render('account', data(req, 'Account', 'core'));
+          }));
 
-webui.post(
-  '/account',
-  wrap(async (req, res) => {
-    const { username, password, confirmPassword } = req.body;
-    const currentUsername = req.session.user!.username;
+webui.post('/account', wrap(async (req, res) => {
+             const {username, password, confirmPassword} = req.body;
+             const currentUsername = req.session.user!.username;
 
-    if (password && password !== confirmPassword) {
-      req.flash('formWarn', 'Passwords do not match.');
-      return res.redirect('/account');
-    }
+             if (password && password !== confirmPassword) {
+               req.flash('formWarn', 'Passwords do not match.');
+               return res.redirect('/account');
+             }
 
-    if (password && password.length < 4) {
-      req.flash('formWarn', 'Password must be at least 4 characters.');
-      return res.redirect('/account');
-    }
+             if (password && password.length < 4) {
+               req.flash('formWarn', 'Password must be at least 4 characters.');
+               return res.redirect('/account');
+             }
 
-    const updateFields: { username?: string; password?: string } = {};
+             const updateFields: {username?: string; password?: string} = {};
 
-    if (username && username !== currentUsername) {
-      if (username.length < 3) {
-        req.flash('formWarn', 'Username must be at least 3 characters.');
-        return res.redirect('/account');
-      }
-      const existing = await FindUserByUsername(username);
-      if (existing) {
-        req.flash('formWarn', 'Username already taken.');
-        return res.redirect('/account');
-      }
-      updateFields.username = username;
-    }
+             if (username && username !== currentUsername) {
+               if (username.length < 3) {
+                 req.flash(
+                     'formWarn', 'Username must be at least 3 characters.');
+                 return res.redirect('/account');
+               }
+               const existing = await FindUserByUsername(username);
+               if (existing) {
+                 req.flash('formWarn', 'Username already taken.');
+                 return res.redirect('/account');
+               }
+               updateFields.username = username;
+             }
 
-    if (password) {
-      updateFields.password = password;
-    }
+             if (password) {
+               updateFields.password = password;
+             }
 
-    if (Object.keys(updateFields).length > 0) {
-      await UpdateUserAccount(currentUsername, updateFields);
-      if (updateFields.username) {
-        req.session.user!.username = updateFields.username;
-      }
-      req.flash('formOk', 'Account updated.');
-    }
+             if (Object.keys(updateFields).length > 0) {
+               await UpdateUserAccount(currentUsername, updateFields);
+               if (updateFields.username) {
+                 req.session.user!.username = updateFields.username;
+               }
+               req.flash('formOk', 'Account updated.');
+             }
 
-    res.redirect('/account');
-  })
-);
+             res.redirect('/account');
+           }));
 
 // User management (admin only)
-webui.get(
-  '/users',
-  wrap(async (req, res) => {
-    if (!req.session.user!.admin) return res.redirect('/');
-    const users = await GetAllUsers();
-    res.render('users', data(req, 'Users', 'core', { users }));
-  })
-);
+webui.get('/users', wrap(async (req, res) => {
+            if (!req.session.user!.admin) return res.redirect('/');
+            const users = await GetAllUsers();
+            res.render('users', data(req, 'Users', 'core', {users}));
+          }));
 
-webui.post(
-  '/users/toggle-admin',
-  wrap(async (req, res) => {
-    if (!req.session.user!.admin) return res.sendStatus(403);
-    const { username } = req.body;
-    if (username === req.session.user!.username) return res.redirect('/users');
+webui.post('/users/toggle-admin', wrap(async (req, res) => {
+             if (!req.session.user!.admin) return res.sendStatus(403);
+             const {username} = req.body;
+             if (username === req.session.user!.username)
+               return res.redirect('/users');
 
-    const target = await FindUserByUsername(username);
-    if (target) {
-      await SetUserAdmin(username, !target.admin);
-    }
-    res.redirect('/users');
-  })
-);
+             const target = await FindUserByUsername(username);
+             if (target) {
+               await SetUserAdmin(username, !target.admin);
+             }
+             res.redirect('/users');
+           }));
 
 // Arcade Management (admin only)
-webui.get(
-  '/admin/arcades',
-  wrap(async (req, res) => {
-    if (!req.session.user!.admin) return res.redirect('/');
-    const arcades = await GetAllArcades();
-    res.render('admin_arcades', data(req, 'Arcades', 'core', { arcades }));
-  })
-);
+webui.get('/admin/arcades', wrap(async (req, res) => {
+            if (!req.session.user!.admin) return res.redirect('/');
+            const arcades = await GetAllArcades();
+            res.render(
+                'admin_arcades', data(req, 'Arcades', 'core', {arcades}));
+          }));
 
-webui.post(
-  '/admin/arcades/create',
-  wrap(async (req, res) => {
-    if (!req.session.user!.admin) return res.sendStatus(403);
-    const { name, region, country, latitude, longitude, place_id, region_name0, region_name1, region_name2, region_name3 } = req.body;
+webui.post('/admin/arcades/create', wrap(async (req, res) => {
+             if (!req.session.user!.admin) return res.sendStatus(403);
+             const {
+               name,
+               region,
+               country,
+               latitude,
+               longitude,
+               place_id,
+               region_name0,
+               region_name1,
+               region_name2,
+               region_name3
+             } = req.body;
 
-    if (!name || !region || !country) {
-      req.flash('formWarn', 'Please fill in required fields.');
-      return res.redirect('/admin/arcades');
-    }
+             if (!name || !region || !country) {
+               req.flash('formWarn', 'Please fill in required fields.');
+               return res.redirect('/admin/arcades');
+             }
 
-    await CreateArcade(
-      name,
-      region,
-      country,
-      parseFloat(latitude) || 0,
-      parseFloat(longitude) || 0,
-      place_id || '0123',
-      region_name0 || '',
-      region_name1 || '',
-      region_name2 || '',
-      region_name3 || ''
-    );
-    req.flash('formOk', 'Arcade created successfully.');
-    res.redirect('/admin/arcades');
-  })
-);
+             await CreateArcade(
+                 name, region, country, parseFloat(latitude) || 0,
+                 parseFloat(longitude) || 0, place_id || '0123',
+                 region_name0 || '', region_name1 || '', region_name2 || '',
+                 region_name3 || '');
+             req.flash('formOk', 'Arcade created successfully.');
+             res.redirect('/admin/arcades');
+           }));
 
-webui.post(
-  '/admin/arcades/delete',
-  wrap(async (req, res) => {
-    if (!req.session.user!.admin) return res.sendStatus(403);
-    const { id } = req.body;
-    if (id) await DeleteArcade(id);
-    req.flash('formOk', 'Arcade deleted.');
-    res.redirect('/admin/arcades');
-  })
-);
+webui.post('/admin/arcades/delete', wrap(async (req, res) => {
+             if (!req.session.user!.admin) return res.sendStatus(403);
+             const {id} = req.body;
+             if (id) await DeleteArcade(id);
+             req.flash('formOk', 'Arcade deleted.');
+             res.redirect('/admin/arcades');
+           }));
 
 // Cabinet Management (admin only)
-webui.get(
-  '/admin/cabinets',
-  wrap(async (req, res) => {
-    if (!req.session.user!.admin) return res.redirect('/');
-    const cabinets = await GetAllCabinets();
-    const arcades = await GetAllArcades();
-    res.render('admin_cabinets', data(req, 'Cabinets', 'core', { cabinets, arcades }));
-  })
-);
+webui.get('/admin/cabinets', wrap(async (req, res) => {
+            if (!req.session.user!.admin) return res.redirect('/');
+            const cabinets = await GetAllCabinets();
+            const arcades = await GetAllArcades();
+            res.render(
+                'admin_cabinets',
+                data(req, 'Cabinets', 'core', {cabinets, arcades}));
+          }));
 
-webui.post(
-  '/admin/cabinets/create',
-  wrap(async (req, res) => {
-    if (!req.session.user!.admin) return res.sendStatus(403);
-    const { pcbid, name, mac } = req.body;
+webui.post('/admin/cabinets/create', wrap(async (req, res) => {
+             if (!req.session.user!.admin) return res.sendStatus(403);
+             const {pcbid, name, mac} = req.body;
 
-    if (!pcbid) {
-      req.flash('formWarn', 'PCBID is required.');
-      return res.redirect('/admin/cabinets');
-    }
+             if (!pcbid) {
+               req.flash('formWarn', 'PCBID is required.');
+               return res.redirect('/admin/cabinets');
+             }
 
-    const existing = await FindCabinet(pcbid);
-    if (existing) {
-      req.flash('formWarn', 'Cabinet with this PCBID already exists.');
-      return res.redirect('/admin/cabinets');
-    }
+             const existing = await FindCabinet(pcbid);
+             if (existing) {
+               req.flash('formWarn', 'Cabinet with this PCBID already exists.');
+               return res.redirect('/admin/cabinets');
+             }
 
-    await CreateCabinet(pcbid, name || 'Unknown Cabinet', mac || '');
-    req.flash('formOk', 'Cabinet registered.');
-    res.redirect('/admin/cabinets');
-  })
-);
+             await CreateCabinet(pcbid, name || 'Unknown Cabinet', mac || '');
+             req.flash('formOk', 'Cabinet registered.');
+             res.redirect('/admin/cabinets');
+           }));
 
-webui.post(
-  '/admin/cabinets/update',
-  wrap(async (req, res) => {
-    if (!req.session.user!.admin) return res.sendStatus(403);
-    const { pcbid, arcade_id, name, mac } = req.body;
+webui.post('/admin/cabinets/update', wrap(async (req, res) => {
+             if (!req.session.user!.admin) return res.sendStatus(403);
+             const {pcbid, arcade_id, name, mac} = req.body;
 
-    if (pcbid) {
-      const updatePayload: any = { name, mac };
-      if (arcade_id) {
-        updatePayload.arcade_id = arcade_id === 'unlinked' ? null : arcade_id;
-      }
-      await UpdateCabinet(pcbid, updatePayload);
-      req.flash('formOk', 'Cabinet updated.');
-    }
-    res.redirect('/admin/cabinets');
-  })
-);
+             if (pcbid) {
+               const updatePayload: any = {name, mac};
+               if (arcade_id) {
+                 updatePayload.arcade_id =
+                     arcade_id === 'unlinked' ? null : arcade_id;
+               }
+               await UpdateCabinet(pcbid, updatePayload);
+               req.flash('formOk', 'Cabinet updated.');
+             }
+             res.redirect('/admin/cabinets');
+           }));
 
-webui.post(
-  '/admin/cabinets/delete',
-  wrap(async (req, res) => {
-    if (!req.session.user!.admin) return res.sendStatus(403);
-    const { pcbid } = req.body;
-    if (pcbid) await DeleteCabinet(pcbid);
-    req.flash('formOk', 'Cabinet deleted.');
-    res.redirect('/admin/cabinets');
-  })
-);
-
-
-
-// Leaderboards
-webui.get(
-  '/leaderboards',
-  wrap(async (req, res) => {
-    // This is a placeholder for a real leaderboard query which would join against music/score tables
-    // from individual game plugins. For now, we render the template.
-    // In a real implementation: `const scores = await PluginDB.findAsync({ __v: 'score' }).sort({ score: -1 }).limit(10);`
-    const scores: any[] = [];
-    res.render('leaderboards', data(req, 'Leaderboards', 'core', { scores }));
-  })
-);
+webui.post('/admin/cabinets/delete', wrap(async (req, res) => {
+             if (!req.session.user!.admin) return res.sendStatus(403);
+             const {pcbid} = req.body;
+             if (pcbid) await DeleteCabinet(pcbid);
+             req.flash('formOk', 'Cabinet deleted.');
+             res.redirect('/admin/cabinets');
+           }));
 
 // Tachi API endpoints
 const TACHI_BASE_URL = 'https://kamai.tachi.ac';
 
 webui.post(
-  '/tachi/exchange',
-  json({ limit: '1mb' }),
-  wrap(async (req, res) => {
-    const code = req.body.code;
-    if (!code) return res.status(400).json({ success: false, description: 'Missing code' });
+    '/tachi/exchange', json({limit: '1mb'}), wrap(async (req, res) => {
+      const code = req.body.code;
+      if (!code)
+        return res.status(400).json(
+            {success: false, description: 'Missing code'});
 
-    const https = require('https');
-    const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
-    const host = req.headers['x-forwarded-host'] || req.headers.host;
-    const redirectUri = `${protocol}://${host}/tachi/callback`;
-    const postData = JSON.stringify({
-      client_id: CONFIG.tachi_client_id,
-      client_secret: CONFIG.tachi_client_secret,
-      grant_type: 'authorization_code',
-      redirect_uri: redirectUri,
-      code,
-    });
-
-    const tokenResult: any = await new Promise((resolve, reject) => {
-      const tokenReq = https.request(
-        `${TACHI_BASE_URL}/api/v1/oauth/token`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Content-Length': Buffer.byteLength(postData),
-          },
-        },
-        (tokenRes: any) => {
-          let body = '';
-          tokenRes.on('data', (chunk: string) => (body += chunk));
-          tokenRes.on('end', () => {
-            try {
-              resolve(JSON.parse(body));
-            } catch {
-              reject(new Error('Failed to parse Tachi response'));
-            }
-          });
-        }
-      );
-      tokenReq.on('error', reject);
-      tokenReq.write(postData);
-      tokenReq.end();
-    });
-
-    if (!tokenResult.success || !tokenResult.body || !tokenResult.body.token) {
-      return res.json({
-        success: false,
-        description: tokenResult.description || 'Token exchange failed',
+      const https = require('https');
+      const protocol =
+          req.headers['x-forwarded-proto'] || req.protocol || 'http';
+      const host = req.headers['x-forwarded-host'] || req.headers.host;
+      const redirectUri = `${protocol}://${host}/tachi/callback`;
+      const postData = JSON.stringify({
+        client_id: CONFIG.tachi_client_id,
+        client_secret: CONFIG.tachi_client_secret,
+        grant_type: 'authorization_code',
+        redirect_uri: redirectUri,
+        code,
       });
-    }
 
-    await SaveTachiToken(req.session.user!.username, tokenResult.body.token);
-    res.json({ success: true });
-  })
-);
-webui.get(
-  '/tachi/status',
-  wrap(async (req, res) => {
-    const token = await GetTachiToken(req.session.user!.username);
-    if (!token) return res.json({ authorized: false });
-
-    // Validate token against Tachi
-    const https = require('https');
-    const valid: boolean = await new Promise(resolve => {
-      https
-        .get(
-          `${TACHI_BASE_URL}/api/v1/users/me`,
-          { headers: { Authorization: `Bearer ${token}` } },
-          (r: any) => {
-            let body = '';
-            r.on('data', (c: string) => (body += c));
-            r.on('end', () => {
-              try {
-                const data = JSON.parse(body);
-                resolve(data.success === true);
-              } catch {
-                resolve(false);
-              }
+      const tokenResult: any = await new Promise((resolve, reject) => {
+        const tokenReq = https.request(
+            `${TACHI_BASE_URL}/api/v1/oauth/token`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(postData),
+              },
+            },
+            (tokenRes: any) => {
+              let body = '';
+              tokenRes.on('data', (chunk: string) => (body += chunk));
+              tokenRes.on('end', () => {
+                try {
+                  resolve(JSON.parse(body));
+                } catch {
+                  reject(new Error('Failed to parse Tachi response'));
+                }
+              });
             });
-          }
-        )
-        .on('error', () => resolve(false));
-    });
+        tokenReq.on('error', reject);
+        tokenReq.write(postData);
+        tokenReq.end();
+      });
 
-    if (!valid) {
-      await DeleteTachiToken(req.session.user!.username);
-      return res.json({ authorized: false });
-    }
-
-    res.json({ authorized: true });
-  })
-);
-
-webui.post(
-  '/tachi/disconnect',
-  wrap(async (req, res) => {
-    // Clean up auto-export entries for this user's profiles
-    const cardNumber = req.session.user!.cardNumber;
-    if (cardNumber) {
-      const card = await FindCard(cardNumber);
-      if (card && card.__refid) {
-        await SaveTachiAutoExport(card.__refid, false);
-        const sdvxPlugin = { identifier: 'sdvx@asphyxia', core: false };
-        await APIRemove(sdvxPlugin, { collection: 'tachi_auto_export', refid: card.__refid });
-      }
-    }
-    await DeleteTachiToken(req.session.user!.username);
-    res.json({ success: true });
-  })
-);
-
-webui.get(
-  '/tachi/export-ts',
-  wrap(async (req, res) => {
-    const refid = req.query.refid as string;
-    if (!refid) return res.status(400).json({ success: false, description: 'Missing refid' });
-
-    const isAdmin = req.session.user!.admin;
-    const isOwner = await userOwnsProfile(req, refid);
-    if (!isAdmin && !isOwner) return res.sendStatus(403);
-
-    const timestamp = await GetTachiExportTimestamp(refid);
-    res.json({ success: true, timestamp });
-  })
-);
-
-webui.post(
-  '/tachi/save-export-ts',
-  json({ limit: '1mb' }),
-  wrap(async (req, res) => {
-    const { refid } = req.body;
-    if (!refid) return res.status(400).json({ success: false, description: 'Missing refid' });
-
-    const isAdmin = req.session.user!.admin;
-    const isOwner = await userOwnsProfile(req, refid);
-    if (!isAdmin && !isOwner) return res.sendStatus(403);
-
-    await SaveTachiExportTimestamp(refid, Date.now());
-    res.json({ success: true });
-  })
-);
-
-webui.get(
-  '/tachi/auto-export',
-  wrap(async (req, res) => {
-    const refid = req.query.refid as string;
-    if (!refid) return res.status(400).json({ success: false, description: 'Missing refid' });
-
-    const isAdmin = req.session.user!.admin;
-    const isOwner = await userOwnsProfile(req, refid);
-    if (!isAdmin && !isOwner) return res.sendStatus(403);
-
-    const enabled = await GetTachiAutoExport(refid);
-    res.json({ success: true, enabled });
-  })
-);
-
-webui.post(
-  '/tachi/auto-export',
-  json({ limit: '1mb' }),
-  wrap(async (req, res) => {
-    const { refid, enabled } = req.body;
-    if (!refid || typeof enabled !== 'boolean')
-      return res.status(400).json({ success: false, description: 'Missing refid or enabled' });
-
-    const isAdmin = req.session.user!.admin;
-    const isOwner = await userOwnsProfile(req, refid);
-    if (!isAdmin && !isOwner) return res.sendStatus(403);
-
-    await SaveTachiAutoExport(refid, enabled);
-
-    // Store/clear a copy of the Tachi token in the plugin DB so the saveScore
-    // handler can access it without needing CoreDB
-    const sdvxPlugin = { identifier: 'sdvx@asphyxia', core: false };
-    if (enabled) {
-      const token = await GetTachiToken(req.session.user!.username);
-      if (token) {
-        await APIUpsert(
-          sdvxPlugin,
-          { collection: 'tachi_auto_export', refid },
-          { collection: 'tachi_auto_export', refid, token }
-        );
-      }
-    } else {
-      await APIRemove(sdvxPlugin, { collection: 'tachi_auto_export', refid });
-    }
-
-    res.json({ success: true });
-  })
-);
-
-webui.post(
-  '/tachi/import',
-  json({ limit: '50mb' }),
-  wrap(async (req, res) => {
-    const token = await GetTachiToken(req.session.user!.username);
-    if (!token)
-      return res.status(401).json({ success: false, description: 'Not authorized with Tachi' });
-
-    const scores = req.body.scores;
-    if (!scores || !Array.isArray(scores) || scores.length === 0) {
-      return res.status(400).json({ success: false, description: 'No scores to import' });
-    }
-
-    const batchManual = JSON.stringify({
-      meta: {
-        game: 'sdvx',
-        playtype: 'Single',
-        service: 'Asphyxia',
-      },
-      scores,
-    });
-
-    const https = require('https');
-
-    const boundary = '----AsphyxiaTachi' + Date.now();
-    const bodyParts = [
-      `--${boundary}\r\n`,
-      `Content-Disposition: form-data; name="importType"\r\n\r\n`,
-      `file/batch-manual\r\n`,
-      `--${boundary}\r\n`,
-      `Content-Disposition: form-data; name="scoreData"; filename="scores.json"\r\n`,
-      `Content-Type: application/json\r\n\r\n`,
-      batchManual + '\r\n',
-      `--${boundary}--\r\n`,
-    ];
-    const postData = Buffer.from(bodyParts.join(''));
-
-    const importResult: any = await new Promise((resolve, reject) => {
-      const importReq = https.request(
-        `${TACHI_BASE_URL}/api/v1/import/file`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': `multipart/form-data; boundary=${boundary}`,
-            'Content-Length': postData.length,
-            'X-User-Intent': 'true',
-          },
-        },
-        (importRes: any) => {
-          let body = '';
-          importRes.on('data', (chunk: string) => (body += chunk));
-          importRes.on('end', () => {
-            try {
-              resolve(JSON.parse(body));
-            } catch {
-              reject(new Error('Failed to parse Tachi import response'));
-            }
-          });
-        }
-      );
-      importReq.on('error', reject);
-      importReq.write(postData);
-      importReq.end();
-    });
-
-    res.json(importResult);
-  })
-);
-
-webui.post(
-  '/tachi/save-scores',
-  json({ limit: '50mb' }),
-  wrap(async (req, res) => {
-    const { refid, scores } = req.body;
-    if (!refid || !scores || !Array.isArray(scores)) {
-      return res.status(400).json({ success: false, description: 'Missing refid or scores' });
-    }
-
-    const isAdmin = req.session.user!.admin;
-    const isOwner = await userOwnsProfile(req, refid);
-    if (!isAdmin && !isOwner) return res.sendStatus(403);
-
-    const plugin = { identifier: 'sdvx@asphyxia', core: false };
-    let saved = 0;
-    let skipped = 0;
-
-    // Detect if user has a v7 (Nabla) profile to determine target version
-    const v7Profile = await APIFindOne(plugin, refid, { collection: 'profile', version: 7 });
-    const targetVersion = v7Profile ? 7 : 6;
-
-    // v6→v7 clear type remapping (UC/PUC/MXV positions differ between versions)
-    // EG (v6): 0=none, 1=played, 2=clear, 3=excessive, 4=uc, 5=puc, 6=mxv
-    // Nabla (v7): 0=none, 1=played, 2=clear, 3=excessive, 4=mxv, 5=uc, 6=puc
-    const nblClearLamp = [0, 1, 2, 3, 5, 6, 4];
-
-    // Convert incoming v6 clear types to v7 format for Nabla users
-    if (targetVersion === 7) {
-      for (const score of scores) {
-        if (!score.version || score.version === 6) {
-          score.clear = nblClearLamp[score.clear] ?? score.clear;
-          score.version = 7;
-        }
-      }
-    }
-
-    // Normalize clear values to a comparable ranking
-    const NABLA_CLEAR_RANK: Record<number, number> = { 0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6 };
-    function clearRank(c: number) {
-      return NABLA_CLEAR_RANK[c] ?? 0;
-    }
-
-    for (const score of scores) {
-      try {
-        // Check if score already exists for this refid (filter by target version)
-        const existing = await APIFind(plugin, refid, {
-          collection: 'music',
-          mid: score.mid,
-          type: score.type,
-          version: targetVersion,
+      if (!tokenResult.success || !tokenResult.body ||
+          !tokenResult.body.token) {
+        return res.json({
+          success: false,
+          description: tokenResult.description || 'Token exchange failed',
         });
+      }
 
-        if (existing && existing.length > 0) {
-          const ex = existing[0];
-          // Update if incoming score is higher, or clear is better, or existing has missing grade
-          if (
-            score.score > ex.score ||
-            clearRank(score.clear) > clearRank(ex.clear) ||
-            (!ex.grade && score.grade)
-          ) {
-            const update: any = {};
-            if (score.score > ex.score) update.score = score.score;
-            if (clearRank(score.clear) > clearRank(ex.clear))
-              update.clear = score.clear;
-            if (score.grade && (!ex.grade || score.grade > ex.grade)) update.grade = score.grade;
-            if (score.exscore && (!ex.exscore || score.exscore > ex.exscore))
-              update.exscore = score.exscore;
+      await SaveTachiToken(req.session.user!.username, tokenResult.body.token);
+      res.json({success: true});
+    }));
+webui.get('/tachi/status', wrap(async (req, res) => {
+            const token = await GetTachiToken(req.session.user!.username);
+            if (!token) return res.json({authorized: false});
 
-            if (Object.keys(update).length > 0) {
-              await APIUpdate(
-                plugin,
-                refid,
-                { collection: 'music', mid: score.mid, type: score.type, version: targetVersion },
-                { $set: update }
-              );
-              saved++;
+            // Validate token against Tachi
+            const https = require('https');
+            const valid: boolean = await new Promise(resolve => {
+              https
+                  .get(
+                      `${TACHI_BASE_URL}/api/v1/users/me`,
+                      {headers: {Authorization: `Bearer ${token}`}},
+                      (r: any) => {
+                        let body = '';
+                        r.on('data', (c: string) => (body += c));
+                        r.on('end', () => {
+                          try {
+                            const data = JSON.parse(body);
+                            resolve(data.success === true);
+                          } catch {
+                            resolve(false);
+                          }
+                        });
+                      })
+                  .on('error', () => resolve(false));
+            });
+
+            if (!valid) {
+              await DeleteTachiToken(req.session.user!.username);
+              return res.json({authorized: false});
+            }
+
+            res.json({authorized: true});
+          }));
+
+webui.post('/tachi/disconnect', wrap(async (req, res) => {
+             // Clean up auto-export entries for this user's profiles
+             const cardNumber = req.session.user!.cardNumber;
+             if (cardNumber) {
+               const card = await FindCard(cardNumber);
+               if (card && card.__refid) {
+                 await SaveTachiAutoExport(card.__refid, false);
+                 const sdvxPlugin = {identifier: 'sdvx@asphyxia', core: false};
+                 await APIRemove(
+                     sdvxPlugin,
+                     {collection: 'tachi_auto_export', refid: card.__refid});
+               }
+             }
+             await DeleteTachiToken(req.session.user!.username);
+             res.json({success: true});
+           }));
+
+webui.get('/tachi/export-ts', wrap(async (req, res) => {
+            const refid = req.query.refid as string;
+            if (!refid)
+              return res.status(400).json(
+                  {success: false, description: 'Missing refid'});
+
+            const isAdmin = req.session.user!.admin;
+            const isOwner = await userOwnsProfile(req, refid);
+            if (!isAdmin && !isOwner) return res.sendStatus(403);
+
+            const timestamp = await GetTachiExportTimestamp(refid);
+            res.json({success: true, timestamp});
+          }));
+
+webui.post(
+    '/tachi/save-export-ts', json({limit: '1mb'}), wrap(async (req, res) => {
+      const {refid} = req.body;
+      if (!refid)
+        return res.status(400).json(
+            {success: false, description: 'Missing refid'});
+
+      const isAdmin = req.session.user!.admin;
+      const isOwner = await userOwnsProfile(req, refid);
+      if (!isAdmin && !isOwner) return res.sendStatus(403);
+
+      await SaveTachiExportTimestamp(refid, Date.now());
+      res.json({success: true});
+    }));
+
+webui.get('/tachi/auto-export', wrap(async (req, res) => {
+            const refid = req.query.refid as string;
+            if (!refid)
+              return res.status(400).json(
+                  {success: false, description: 'Missing refid'});
+
+            const isAdmin = req.session.user!.admin;
+            const isOwner = await userOwnsProfile(req, refid);
+            if (!isAdmin && !isOwner) return res.sendStatus(403);
+
+            const enabled = await GetTachiAutoExport(refid);
+            res.json({success: true, enabled});
+          }));
+
+webui.post(
+    '/tachi/auto-export', json({limit: '1mb'}), wrap(async (req, res) => {
+      const {refid, enabled} = req.body;
+      if (!refid || typeof enabled !== 'boolean')
+        return res.status(400).json(
+            {success: false, description: 'Missing refid or enabled'});
+
+      const isAdmin = req.session.user!.admin;
+      const isOwner = await userOwnsProfile(req, refid);
+      if (!isAdmin && !isOwner) return res.sendStatus(403);
+
+      await SaveTachiAutoExport(refid, enabled);
+
+      // Store/clear a copy of the Tachi token in the plugin DB so the saveScore
+      // handler can access it without needing CoreDB
+      const sdvxPlugin = {identifier: 'sdvx@asphyxia', core: false};
+      if (enabled) {
+        const token = await GetTachiToken(req.session.user!.username);
+        if (token) {
+          await APIUpsert(
+              sdvxPlugin, {collection: 'tachi_auto_export', refid},
+              {collection: 'tachi_auto_export', refid, token});
+        }
+      } else {
+        await APIRemove(sdvxPlugin, {collection: 'tachi_auto_export', refid});
+      }
+
+      res.json({success: true});
+    }));
+
+webui.post(
+    '/tachi/import', json({limit: '50mb'}), wrap(async (req, res) => {
+      const token = await GetTachiToken(req.session.user!.username);
+      if (!token)
+        return res.status(401).json(
+            {success: false, description: 'Not authorized with Tachi'});
+
+      const scores = req.body.scores;
+      if (!scores || !Array.isArray(scores) || scores.length === 0) {
+        return res.status(400).json(
+            {success: false, description: 'No scores to import'});
+      }
+
+      const batchManual = JSON.stringify({
+        meta: {
+          game: 'sdvx',
+          playtype: 'Single',
+          service: 'Asphyxia',
+        },
+        scores,
+      });
+
+      const https = require('https');
+
+      const boundary = '----AsphyxiaTachi' + Date.now();
+      const bodyParts = [
+        `--${boundary}\r\n`,
+        `Content-Disposition: form-data; name="importType"\r\n\r\n`,
+        `file/batch-manual\r\n`,
+        `--${boundary}\r\n`,
+        `Content-Disposition: form-data; name="scoreData"; filename="scores.json"\r\n`,
+        `Content-Type: application/json\r\n\r\n`,
+        batchManual + '\r\n',
+        `--${boundary}--\r\n`,
+      ];
+      const postData = Buffer.from(bodyParts.join(''));
+
+      const importResult: any = await new Promise((resolve, reject) => {
+        const importReq = https.request(
+            `${TACHI_BASE_URL}/api/v1/import/file`, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': `multipart/form-data; boundary=${boundary}`,
+                'Content-Length': postData.length,
+                'X-User-Intent': 'true',
+              },
+            },
+            (importRes: any) => {
+              let body = '';
+              importRes.on('data', (chunk: string) => (body += chunk));
+              importRes.on('end', () => {
+                try {
+                  resolve(JSON.parse(body));
+                } catch {
+                  reject(new Error('Failed to parse Tachi import response'));
+                }
+              });
+            });
+        importReq.on('error', reject);
+        importReq.write(postData);
+        importReq.end();
+      });
+
+      res.json(importResult);
+    }));
+
+webui.post(
+    '/tachi/save-scores', json({limit: '50mb'}), wrap(async (req, res) => {
+      const {refid, scores} = req.body;
+      if (!refid || !scores || !Array.isArray(scores)) {
+        return res.status(400).json(
+            {success: false, description: 'Missing refid or scores'});
+      }
+
+      const isAdmin = req.session.user!.admin;
+      const isOwner = await userOwnsProfile(req, refid);
+      if (!isAdmin && !isOwner) return res.sendStatus(403);
+
+      const plugin = {identifier: 'sdvx@asphyxia', core: false};
+      let saved = 0;
+      let skipped = 0;
+
+      // Detect if user has a v7 (Nabla) profile to determine target version
+      const v7Profile =
+          await APIFindOne(plugin, refid, {collection: 'profile', version: 7});
+      const targetVersion = v7Profile ? 7 : 6;
+
+      // v6→v7 clear type remapping (UC/PUC/MXV positions differ between
+      // versions) EG (v6): 0=none, 1=played, 2=clear, 3=excessive, 4=uc, 5=puc,
+      // 6=mxv Nabla (v7): 0=none, 1=played, 2=clear, 3=excessive, 4=mxv, 5=uc,
+      // 6=puc
+      const nblClearLamp = [0, 1, 2, 3, 5, 6, 4];
+
+      // Convert incoming v6 clear types to v7 format for Nabla users
+      if (targetVersion === 7) {
+        for (const score of scores) {
+          if (!score.version || score.version === 6) {
+            score.clear = nblClearLamp[score.clear] ?? score.clear;
+            score.version = 7;
+          }
+        }
+      }
+
+      // Normalize clear values to a comparable ranking
+      const NABLA_CLEAR_RANK:
+          Record<number, number> = {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6};
+      function clearRank(c: number) {
+        return NABLA_CLEAR_RANK[c] ?? 0;
+      }
+
+      for (const score of scores) {
+        try {
+          // Check if score already exists for this refid (filter by target
+          // version)
+          const existing = await APIFind(plugin, refid, {
+            collection: 'music',
+            mid: score.mid,
+            type: score.type,
+            version: targetVersion,
+          });
+
+          if (existing && existing.length > 0) {
+            const ex = existing[0];
+            // Update if incoming score is higher, or clear is better, or
+            // existing has missing grade
+            if (score.score > ex.score ||
+                clearRank(score.clear) > clearRank(ex.clear) ||
+                (!ex.grade && score.grade)) {
+              const update: any = {};
+              if (score.score > ex.score) update.score = score.score;
+              if (clearRank(score.clear) > clearRank(ex.clear))
+                update.clear = score.clear;
+              if (score.grade && (!ex.grade || score.grade > ex.grade))
+                update.grade = score.grade;
+              if (score.exscore && (!ex.exscore || score.exscore > ex.exscore))
+                update.exscore = score.exscore;
+
+              if (Object.keys(update).length > 0) {
+                await APIUpdate(
+                    plugin, refid, {
+                      collection: 'music',
+                      mid: score.mid,
+                      type: score.type,
+                      version: targetVersion
+                    },
+                    {$set: update});
+                saved++;
+              } else {
+                skipped++;
+              }
             } else {
               skipped++;
             }
-          } else {
-            skipped++;
+            continue;
           }
-          continue;
-        }
 
-        // Insert new scores
-        const doc: any = {
-          collection: 'music',
-          mid: score.mid,
-          type: score.type,
-          score: score.score,
-          clear: score.clear,
-          exscore: score.exscore || 0,
-          grade: score.grade || 0,
-          buttonRate: 0,
-          longRate: 0,
-          volRate: 0,
-          version: targetVersion,
-          dbver: 1,
-        };
-        if (score.timeAchieved) {
-          doc.createdAt = new Date(score.timeAchieved);
-          doc.updatedAt = new Date(score.timeAchieved);
+          // Insert new scores
+          const doc: any = {
+            collection: 'music',
+            mid: score.mid,
+            type: score.type,
+            score: score.score,
+            clear: score.clear,
+            exscore: score.exscore || 0,
+            grade: score.grade || 0,
+            buttonRate: 0,
+            longRate: 0,
+            volRate: 0,
+            version: targetVersion,
+            dbver: 1,
+          };
+          if (score.timeAchieved) {
+            doc.createdAt = new Date(score.timeAchieved);
+            doc.updatedAt = new Date(score.timeAchieved);
+          }
+          await APIInsert(plugin, refid, doc);
+          saved++;
+        } catch (err) {
+          Logger.error(`Failed to save Tachi score mid=${score.mid} type=${
+              score.type}: ${err}`);
         }
-        await APIInsert(plugin, refid, doc);
-        saved++;
-      } catch (err) {
-        Logger.error(`Failed to save Tachi score mid=${score.mid} type=${score.type}: ${err}`);
       }
-    }
 
-    res.json({ success: true, saved, skipped });
-  })
-);
+      res.json({success: true, saved, skipped});
+    }));
 
 webui.get(
-  '/tachi/pbs',
-  wrap(async (req, res) => {
-    const token = await GetTachiToken(req.session.user!.username);
-    if (!token)
-      return res.status(401).json({ success: false, description: 'Not authorized with Tachi' });
+    '/tachi/pbs', wrap(async (req, res) => {
+      const token = await GetTachiToken(req.session.user!.username);
+      if (!token)
+        return res.status(401).json(
+            {success: false, description: 'Not authorized with Tachi'});
 
-    const https = require('https');
+      const https = require('https');
 
-    const tachiGet = (urlPath: string): Promise<any> =>
-      new Promise((resolve, reject) => {
-        https
-          .get(
-            `${TACHI_BASE_URL}${urlPath}`,
-            { headers: { Authorization: `Bearer ${token}` } },
-            (r: any) => {
-              let body = '';
-              r.on('data', (c: string) => (body += c));
-              r.on('end', () => {
-                try {
-                  resolve(JSON.parse(body));
-                } catch {
-                  reject(new Error('Failed to parse Tachi response'));
-                }
-              });
-            }
-          )
-          .on('error', reject);
-      });
+      const tachiGet = (urlPath: string): Promise<any> =>
+          new Promise((resolve, reject) => {
+            https
+                .get(
+                    `${TACHI_BASE_URL}${urlPath}`,
+                    {headers: {Authorization: `Bearer ${token}`}},
+                    (r: any) => {
+                      let body = '';
+                      r.on('data', (c: string) => (body += c));
+                      r.on('end', () => {
+                        try {
+                          resolve(JSON.parse(body));
+                        } catch {
+                          reject(new Error('Failed to parse Tachi response'));
+                        }
+                      });
+                    })
+                .on('error', reject);
+          });
 
-    const result = await tachiGet('/api/v1/users/me/games/sdvx/Single/pbs/all');
-    if (!result.success) {
-      return res.json({ success: false, description: result.description || 'Failed to fetch PBs' });
-    }
+      const result =
+          await tachiGet('/api/v1/users/me/games/sdvx/Single/pbs/all');
+      if (!result.success) {
+        return res.json({
+          success: false,
+          description: result.description || 'Failed to fetch PBs'
+        });
+      }
 
-    const { pbs, charts, songs } = result.body;
+      const {pbs, charts, songs} = result.body;
 
-    const chartMap: Record<string, any> = {};
-    for (const c of charts) chartMap[c.chartID] = c;
+      const chartMap: Record<string, any> = {};
+      for (const c of charts) chartMap[c.chartID] = c;
 
-    const songMap: Record<number, any> = {};
-    for (const s of songs) songMap[s.id] = s;
+      const songMap: Record<number, any> = {};
+      for (const s of songs) songMap[s.id] = s;
 
-    // Tachi lamp to SDVX EG clear type mapping (reverse of export)
-    // EG: 0=none, 1=played, 2=clear, 3=excessive, 4=uc, 5=puc, 6=mxv
-    const LAMP_TO_CLEAR: Record<string, number> = {
-      'FAILED': 1,
-      'CLEAR': 2,
-      'EXCESSIVE CLEAR': 3,
-      'ULTIMATE CHAIN': 4,
-      'PERFECT ULTIMATE CHAIN': 5,
-      'MAXXIVE CLEAR': 6,
-    };
+      // Tachi lamp to SDVX EG clear type mapping (reverse of export)
+      // EG: 0=none, 1=played, 2=clear, 3=excessive, 4=uc, 5=puc, 6=mxv
+      const LAMP_TO_CLEAR: Record<string, number> = {
+        'FAILED': 1,
+        'CLEAR': 2,
+        'EXCESSIVE CLEAR': 3,
+        'ULTIMATE CHAIN': 4,
+        'PERFECT ULTIMATE CHAIN': 5,
+        'MAXXIVE CLEAR': 6,
+      };
 
-    // Tachi grade to Asphyxia grade mapping
-    const GRADE_MAP: Record<string, number> = {
-      'D': 1,
-      'C': 2,
-      'B': 3,
-      'A': 4,
-      'A+': 5,
-      'AA': 6,
-      'AA+': 7,
-      'AAA': 8,
-      'AAA+': 9,
-      'S': 10,
-      'PUC': 10,
-    };
+      // Tachi grade to Asphyxia grade mapping
+      const GRADE_MAP: Record<string, number> = {
+        'D': 1,
+        'C': 2,
+        'B': 3,
+        'A': 4,
+        'A+': 5,
+        'AA': 6,
+        'AA+': 7,
+        'AAA': 8,
+        'AAA+': 9,
+        'S': 10,
+        'PUC': 10,
+      };
 
-    // Tachi difficulty to SDVX type mapping
-    const DIFF_TO_TYPE: Record<string, number> = {
-      NOV: 0,
-      ADV: 1,
-      EXH: 2,
-      INF: 3,
-      GRV: 3,
-      HVN: 3,
-      VVD: 3,
-      XCD: 3,
-      MXM: 4,
-      ULT: 5,
-    };
+      // Tachi difficulty to SDVX type mapping
+      const DIFF_TO_TYPE: Record<string, number> = {
+        NOV: 0,
+        ADV: 1,
+        EXH: 2,
+        INF: 3,
+        GRV: 3,
+        HVN: 3,
+        VVD: 3,
+        XCD: 3,
+        MXM: 4,
+        ULT: 5,
+      };
 
-    const scores: any[] = [];
-    for (let i = 0; i < pbs.length; i++) {
-      const pb = pbs[i];
-      const chart = chartMap[pb.chartID];
-      const song = songMap[pb.songID];
-      if (!chart || !song) continue;
+      const scores: any[] = [];
+      for (let i = 0; i < pbs.length; i++) {
+        const pb = pbs[i];
+        const chart = chartMap[pb.chartID];
+        const song = songMap[pb.songID];
+        if (!chart || !song) continue;
 
-      const clear = LAMP_TO_CLEAR[pb.scoreData.lamp];
-      const type = DIFF_TO_TYPE[chart.difficulty];
-      if (clear === undefined || type === undefined) continue;
+        const clear = LAMP_TO_CLEAR[pb.scoreData.lamp];
+        const type = DIFF_TO_TYPE[chart.difficulty];
+        if (clear === undefined || type === undefined) continue;
 
-      scores.push({
-        mid: chart.data.inGameID,
-        type,
-        score: pb.scoreData.score,
-        clear,
-        grade: GRADE_MAP[pb.scoreData.grade] || 0,
-        exscore: pb.scoreData.optional?.exScore || 0,
-        timeAchieved: pb.timeAchieved || null,
-        songName: song.title,
-        difficulty: chart.difficulty,
-        lamp: pb.scoreData.lamp,
-      });
-    }
+        scores.push({
+          mid: chart.data.inGameID,
+          type,
+          score: pb.scoreData.score,
+          clear,
+          grade: GRADE_MAP[pb.scoreData.grade] || 0,
+          exscore: pb.scoreData.optional?.exScore || 0,
+          timeAchieved: pb.timeAchieved || null,
+          songName: song.title,
+          difficulty: chart.difficulty,
+          lamp: pb.scoreData.lamp,
+        });
+      }
 
-    res.json({ success: true, scores });
-  })
-);
+      res.json({success: true, scores});
+    }));
 
 webui.get(
-  '/tachi/pbs/best',
-  wrap(async (req, res) => {
-    const token = await GetTachiToken(req.session.user!.username);
-    if (!token)
-      return res.status(401).json({ success: false, description: 'Not authorized with Tachi' });
+    '/tachi/pbs/best', wrap(async (req, res) => {
+      const token = await GetTachiToken(req.session.user!.username);
+      if (!token)
+        return res.status(401).json(
+            {success: false, description: 'Not authorized with Tachi'});
 
-    const https = require('https');
+      const https = require('https');
 
-    const tachiGet = (urlPath: string): Promise<any> =>
-      new Promise((resolve, reject) => {
-        https
-          .get(
-            `${TACHI_BASE_URL}${urlPath}`,
-            { headers: { Authorization: `Bearer ${token}` } },
-            (r: any) => {
-              let body = '';
-              r.on('data', (c: string) => (body += c));
-              r.on('end', () => {
-                try {
-                  resolve(JSON.parse(body));
-                } catch {
-                  reject(new Error('Failed to parse Tachi response'));
-                }
-              });
-            }
-          )
-          .on('error', reject);
-      });
+      const tachiGet = (urlPath: string): Promise<any> =>
+          new Promise((resolve, reject) => {
+            https
+                .get(
+                    `${TACHI_BASE_URL}${urlPath}`,
+                    {headers: {Authorization: `Bearer ${token}`}},
+                    (r: any) => {
+                      let body = '';
+                      r.on('data', (c: string) => (body += c));
+                      r.on('end', () => {
+                        try {
+                          resolve(JSON.parse(body));
+                        } catch {
+                          reject(new Error('Failed to parse Tachi response'));
+                        }
+                      });
+                    })
+                .on('error', reject);
+          });
 
-    const result = await tachiGet('/api/v1/users/me/games/sdvx/Single/pbs/best');
-    if (!result.success) {
-      return res.json({ success: false, description: result.description || 'Failed to fetch PBs' });
-    }
+      const result =
+          await tachiGet('/api/v1/users/me/games/sdvx/Single/pbs/best');
+      if (!result.success) {
+        return res.json({
+          success: false,
+          description: result.description || 'Failed to fetch PBs'
+        });
+      }
 
-    const { pbs, charts, songs } = result.body;
+      const {pbs, charts, songs} = result.body;
 
-    const chartMap: Record<string, any> = {};
-    for (const c of charts) chartMap[c.chartID] = c;
+      const chartMap: Record<string, any> = {};
+      for (const c of charts) chartMap[c.chartID] = c;
 
-    const songMap: Record<number, any> = {};
-    for (const s of songs) songMap[s.id] = s;
+      const songMap: Record<number, any> = {};
+      for (const s of songs) songMap[s.id] = s;
 
-    const scores: any[] = [];
-    for (let i = 0; i < pbs.length; i++) {
-      const pb = pbs[i];
-      const chart = chartMap[pb.chartID];
-      const song = chart ? songMap[chart.songID] : null;
-      if (!chart || !song) continue;
+      const scores: any[] = [];
+      for (let i = 0; i < pbs.length; i++) {
+        const pb = pbs[i];
+        const chart = chartMap[pb.chartID];
+        const song = chart ? songMap[chart.songID] : null;
+        if (!chart || !song) continue;
 
-      scores.push({
-        score: pb.scoreData.score,
-        lamp: pb.scoreData.lamp,
-        grade: pb.scoreData.grade,
-        songName: song.title,
-        difficulty: chart.difficulty,
-        level: chart.level,
-        vf: pb.calculatedData?.VF6 || 0,
-      });
-    }
+        scores.push({
+          score: pb.scoreData.score,
+          lamp: pb.scoreData.lamp,
+          grade: pb.scoreData.grade,
+          songName: song.title,
+          difficulty: chart.difficulty,
+          level: chart.level,
+          vf: pb.calculatedData?.VF6 || 0,
+        });
+      }
 
-    res.json({ success: true, scores });
-  })
-);
+      res.json({success: true, scores});
+    }));
 
 // Nabla tools
 webui.post(
-  '/nabla/recalculate-vf',
-  json({ limit: '1mb' }),
-  wrap(async (req, res) => {
-    const { refid } = req.body;
-    if (!refid) {
-      return res.status(400).json({ success: false, description: 'Missing refid' });
-    }
-
-    const isAdmin = req.session.user!.admin;
-    const isOwner = await userOwnsProfile(req, refid);
-    if (!isAdmin && !isOwner) return res.sendStatus(403);
-
-    const musicDbPath = path.join(
-      PLUGIN_PATH,
-      'sdvx@asphyxia',
-      'webui',
-      'asset',
-      'json',
-      'music_db.json'
-    );
-    if (!existsSync(musicDbPath)) {
-      return res
-        .status(500)
-        .json({ success: false, description: 'music_db.json not found in plugin folder' });
-    }
-    const mdb = JSON.parse(readFileSync(musicDbPath, 'utf8'));
-
-    // Merge custom songs if file exists
-    const customDbPath = path.join(
-      PLUGIN_PATH,
-      'sdvx@asphyxia',
-      'webui',
-      'asset',
-      'json',
-      'custom_music_db.json'
-    );
-    if (existsSync(customDbPath)) {
-      try {
-        const customDb = JSON.parse(readFileSync(customDbPath, 'utf8'));
-        if (customDb?.mdb?.music?.length) {
-          mdb.mdb.music = mdb.mdb.music.concat(customDb.mdb.music);
-        }
-      } catch { }
-    }
-
-    const medalCoef = [0, 0.5, 1.0, 1.02, 1.04, 1.06, 1.1];
-    const gradeCoef = [0, 0.8, 0.82, 0.85, 0.88, 0.91, 0.94, 0.97, 1.0, 1.02, 1.05];
-    function computeForce(diff: number, score: number, medal: number, grade: number) {
-      return Math.floor(diff * (score / 10000000) * gradeCoef[grade] * medalCoef[medal] * 20);
-    }
-
-    const diffName = ['novice', 'advanced', 'exhaust', 'infinite', 'maximum', 'ultimate'];
-    const plugin = { identifier: 'sdvx@asphyxia', core: false };
-
-    // Check if v7 profile exists; if not, migrate from v6
-    let migrated = false;
-    const v7Profile = await APIFindOne(plugin, refid, { collection: 'profile', version: 7 });
-    if (!v7Profile) {
-      const v6Profile = await APIFindOne(plugin, refid, { collection: 'profile', version: 6 });
-      if (!v6Profile) {
-        return res
-          .status(400)
-          .json({ success: false, description: 'No Exceed Gear (v6) profile found to migrate' });
+    '/nabla/recalculate-vf', json({limit: '1mb'}), wrap(async (req, res) => {
+      const {refid} = req.body;
+      if (!refid) {
+        return res.status(400).json(
+            {success: false, description: 'Missing refid'});
       }
 
-      // Migrate profile
-      await APIUpsert(
-        plugin,
-        refid,
-        { collection: 'profile', version: 7 },
-        {
+      const isAdmin = req.session.user!.admin;
+      const isOwner = await userOwnsProfile(req, refid);
+      if (!isAdmin && !isOwner) return res.sendStatus(403);
+
+      const musicDbPath = path.join(
+          PLUGIN_PATH, 'sdvx@asphyxia', 'webui', 'asset', 'json',
+          'music_db.json');
+      if (!existsSync(musicDbPath)) {
+        return res.status(500).json({
+          success: false,
+          description: 'music_db.json not found in plugin folder'
+        });
+      }
+      const mdb = JSON.parse(readFileSync(musicDbPath, 'utf8'));
+
+      // Merge custom songs if file exists
+      const customDbPath = path.join(
+          PLUGIN_PATH, 'sdvx@asphyxia', 'webui', 'asset', 'json',
+          'custom_music_db.json');
+      if (existsSync(customDbPath)) {
+        try {
+          const customDb = JSON.parse(readFileSync(customDbPath, 'utf8'));
+          if (customDb?.mdb?.music?.length) {
+            mdb.mdb.music = mdb.mdb.music.concat(customDb.mdb.music);
+          }
+        } catch {
+        }
+      }
+
+      const medalCoef = [0, 0.5, 1.0, 1.02, 1.04, 1.06, 1.1];
+      const gradeCoef =
+          [0, 0.8, 0.82, 0.85, 0.88, 0.91, 0.94, 0.97, 1.0, 1.02, 1.05];
+      function computeForce(
+          diff: number, score: number, medal: number, grade: number) {
+        return Math.floor(
+            diff * (score / 10000000) * gradeCoef[grade] * medalCoef[medal] *
+            20);
+      }
+
+      const diffName =
+          ['novice', 'advanced', 'exhaust', 'infinite', 'maximum', 'ultimate'];
+      const plugin = {identifier: 'sdvx@asphyxia', core: false};
+
+      // Check if v7 profile exists; if not, migrate from v6
+      let migrated = false;
+      const v7Profile =
+          await APIFindOne(plugin, refid, {collection: 'profile', version: 7});
+      if (!v7Profile) {
+        const v6Profile = await APIFindOne(
+            plugin, refid, {collection: 'profile', version: 6});
+        if (!v6Profile) {
+          return res.status(400).json({
+            success: false,
+            description: 'No Exceed Gear (v6) profile found to migrate'
+          });
+        }
+
+        // Migrate profile
+        await APIUpsert(plugin, refid, {collection: 'profile', version: 7}, {
           $set: {
             pluginVer: 1,
             dbver: 1,
@@ -1166,310 +1060,298 @@ webui.post(
             bplSupport: v6Profile.bplSupport,
             creatorItem: v6Profile.creatorItem,
           },
-        }
-      );
-
-      // Migrate items
-      const v6Items = await APIFind(plugin, refid, { collection: 'item', version: 6 });
-      for (const item of v6Items) {
-        await APIUpsert(
-          plugin,
-          refid,
-          { collection: 'item', version: 7, type: item.type, id: item.id },
-          {
-            $set: { param: item.param },
-          }
-        );
-      }
-
-      // Migrate params
-      const v6Params = await APIFind(plugin, refid, { collection: 'param', version: 6 });
-      for (const param of v6Params) {
-        const paramData = [...(param.param || [])];
-        if (param.type === 2 && param.id === 1 && paramData.length > 24) paramData[24] = 0;
-        await APIUpsert(
-          plugin,
-          refid,
-          { collection: 'param', version: 7, type: param.type, id: param.id },
-          {
-            $set: { param: paramData },
-          }
-        );
-      }
-
-      // Migrate scores with clear lamp remapping and volforce computation
-      const nblClearLamp = [0, 1, 2, 3, 5, 6, 4];
-      const exScoreResetList = [
-        { id: 360, type: 3 },
-        { id: 580, type: 2 },
-        { id: 1121, type: 4 },
-        { id: 1185, type: 2 },
-        { id: 1199, type: 4 },
-        { id: 1738, type: 4 },
-        { id: 2242, type: 0 },
-      ];
-      const levelDifOverride = [
-        { mid: 1, type: 1, lvl: 10 },
-        { mid: 18, type: 1, lvl: 8 },
-        { mid: 18, type: 2, lvl: 10 },
-        { mid: 73, type: 2, lvl: 17 },
-        { mid: 48, type: 1, lvl: 8 },
-        { mid: 75, type: 2, lvl: 12 },
-        { mid: 124, type: 2, lvl: 16 },
-        { mid: 65, type: 1, lvl: 7 },
-        { mid: 66, type: 1, lvl: 8 },
-        { mid: 27, type: 1, lvl: 7 },
-        { mid: 27, type: 2, lvl: 12 },
-        { mid: 68, type: 1, lvl: 9 },
-        { mid: 6, type: 1, lvl: 7 },
-        { mid: 6, type: 2, lvl: 12 },
-        { mid: 16, type: 1, lvl: 7 },
-        { mid: 2, type: 1, lvl: 10 },
-        { mid: 60, type: 3, lvl: 17 },
-        { mid: 5, type: 2, lvl: 13 },
-        { mid: 128, type: 2, lvl: 13 },
-        { mid: 9, type: 2, lvl: 1 },
-        { mid: 340, type: 2, lvl: 13 },
-        { mid: 247, type: 3, lvl: 18 },
-        { mid: 282, type: 2, lvl: 17 },
-        { mid: 288, type: 2, lvl: 13 },
-        { mid: 699, type: 3, lvl: 18 },
-        { mid: 595, type: 2, lvl: 17 },
-        { mid: 507, type: 2, lvl: 17 },
-        { mid: 1044, type: 2, lvl: 16 },
-        { mid: 948, type: 4, lvl: 16 },
-        { mid: 1115, type: 4, lvl: 16 },
-        { mid: 1215, type: 2, lvl: 15 },
-        { mid: 1152, type: 2, lvl: 15 },
-        { mid: 1282, type: 3, lvl: 17.5 },
-        { mid: 1343, type: 2, lvl: 16 },
-        { mid: 1300, type: 3, lvl: 17.5 },
-        { mid: 1938, type: 2, lvl: 18 },
-      ];
-
-      const v6Scores = await APIFind(plugin, refid, { collection: 'music', version: 6 });
-      for (const rec of v6Scores) {
-        const song = mdb.mdb.music.find((s: any) => String(s.id) === String(rec.mid));
-        if (!song) continue;
-
-        let diffLevel = parseFloat(song.difficulty[diffName[rec.type]]) || 0;
-        const lvOverride = levelDifOverride.find(d => d.mid === rec.mid && d.type === rec.type);
-        if (lvOverride) diffLevel = lvOverride.lvl;
-
-        const resetExScore = exScoreResetList.some(d => d.id === rec.mid && d.type === rec.type);
-        const exscore = resetExScore ? 0 : rec.exscore || 0;
-        const clear = nblClearLamp[rec.clear] ?? rec.clear;
-
-        await APIUpsert(
-          plugin,
-          refid,
-          { collection: 'music', mid: rec.mid, type: rec.type, version: 7 },
-          {
-            $set: {
-              score: rec.score,
-              exscore,
-              clear,
-              grade: rec.grade,
-              volforce: computeForce(diffLevel, rec.score, clear, rec.grade),
-              buttonRate: rec.buttonRate,
-              longRate: rec.longRate,
-              volRate: rec.volRate,
-            },
-          }
-        );
-      }
-
-      migrated = true;
-    }
-
-    const scores = await APIFind(plugin, refid, { collection: 'music', version: 7 });
-
-    let updated = 0;
-    for (const score of scores) {
-      const song = mdb.mdb.music.find((s: any) => String(s.id) === String(score.mid));
-      if (!song) continue;
-
-      const typeIndex = score.type;
-      const key =
-        typeIndex === 4
-          ? song.difficulty.maximum || song.difficulty.infinite
-          : song.difficulty[diffName[typeIndex]];
-      const diffLevel = parseFloat(key) || 0;
-      if (diffLevel === 0) continue;
-
-      const newVf = computeForce(diffLevel, score.score, score.clear, score.grade);
-      if (newVf !== score.volforce) {
-        await APIUpdate(
-          plugin,
-          refid,
-          { collection: 'music', mid: score.mid, type: score.type, version: 7 },
-          { $set: { volforce: newVf } }
-        );
-        updated++;
-      }
-    }
-
-    res.json({ success: true, total: scores.length, updated, migrated });
-  })
-);
-
-// Score migration from another Asphyxia server
-webui.post(
-  '/migrate/import-scores',
-  json({ limit: '50mb' }),
-  wrap(async (req, res) => {
-    const { refid, scores } = req.body;
-    if (!refid || !scores || !Array.isArray(scores)) {
-      return res.status(400).json({ success: false, description: 'Missing refid or scores' });
-    }
-
-    const isAdmin = req.session.user!.admin;
-    const isOwner = await userOwnsProfile(req, refid);
-    if (!isAdmin && !isOwner) return res.sendStatus(403);
-
-    const plugin = { identifier: 'sdvx@asphyxia', core: false };
-    let saved = 0;
-    let skipped = 0;
-
-    const EG_CLEAR_RANK: Record<number, number> = { 0: 0, 1: 1, 2: 2, 3: 3, 6: 4, 4: 5, 5: 6 };
-    const NABLA_CLEAR_RANK: Record<number, number> = { 0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6 };
-    function clearRank(c: number, version?: number) {
-      const map = version === 7 ? NABLA_CLEAR_RANK : EG_CLEAR_RANK;
-      return map[c] ?? 0;
-    }
-
-    for (const score of scores) {
-      try {
-        const existing = await APIFind(plugin, refid, {
-          collection: 'music',
-          mid: score.mid,
-          type: score.type,
-          version: score.version || 6,
         });
 
-        if (existing && existing.length > 0) {
-          const ex = existing[0];
-          const update: any = {};
-          if (score.score > ex.score) {
-            update.score = score.score;
-            update.buttonRate = score.buttonRate || 0;
-            update.longRate = score.longRate || 0;
-            update.volRate = score.volRate || 0;
-          }
-          if (clearRank(score.clear, score.version) > clearRank(ex.clear, ex.version))
-            update.clear = score.clear;
-          if (score.grade && (!ex.grade || score.grade > ex.grade)) update.grade = score.grade;
-          if (score.exscore && (!ex.exscore || score.exscore > ex.exscore))
-            update.exscore = score.exscore;
-          if (score.volforce && (!ex.volforce || score.volforce > ex.volforce))
-            update.volforce = score.volforce;
+        // Migrate items
+        const v6Items =
+            await APIFind(plugin, refid, {collection: 'item', version: 6});
+        for (const item of v6Items) {
+          await APIUpsert(
+              plugin, refid,
+              {collection: 'item', version: 7, type: item.type, id: item.id}, {
+                $set: {param: item.param},
+              });
+        }
 
-          if (Object.keys(update).length > 0) {
-            await APIUpdate(
-              plugin,
-              refid,
+        // Migrate params
+        const v6Params =
+            await APIFind(plugin, refid, {collection: 'param', version: 6});
+        for (const param of v6Params) {
+          const paramData = [...(param.param || [])];
+          if (param.type === 2 && param.id === 1 && paramData.length > 24)
+            paramData[24] = 0;
+          await APIUpsert(
+              plugin, refid,
+              {collection: 'param', version: 7, type: param.type, id: param.id},
               {
+                $set: {param: paramData},
+              });
+        }
+
+        // Migrate scores with clear lamp remapping and volforce computation
+        const nblClearLamp = [0, 1, 2, 3, 5, 6, 4];
+        const exScoreResetList = [
+          {id: 360, type: 3},
+          {id: 580, type: 2},
+          {id: 1121, type: 4},
+          {id: 1185, type: 2},
+          {id: 1199, type: 4},
+          {id: 1738, type: 4},
+          {id: 2242, type: 0},
+        ];
+        const levelDifOverride = [
+          {mid: 1, type: 1, lvl: 10},      {mid: 18, type: 1, lvl: 8},
+          {mid: 18, type: 2, lvl: 10},     {mid: 73, type: 2, lvl: 17},
+          {mid: 48, type: 1, lvl: 8},      {mid: 75, type: 2, lvl: 12},
+          {mid: 124, type: 2, lvl: 16},    {mid: 65, type: 1, lvl: 7},
+          {mid: 66, type: 1, lvl: 8},      {mid: 27, type: 1, lvl: 7},
+          {mid: 27, type: 2, lvl: 12},     {mid: 68, type: 1, lvl: 9},
+          {mid: 6, type: 1, lvl: 7},       {mid: 6, type: 2, lvl: 12},
+          {mid: 16, type: 1, lvl: 7},      {mid: 2, type: 1, lvl: 10},
+          {mid: 60, type: 3, lvl: 17},     {mid: 5, type: 2, lvl: 13},
+          {mid: 128, type: 2, lvl: 13},    {mid: 9, type: 2, lvl: 1},
+          {mid: 340, type: 2, lvl: 13},    {mid: 247, type: 3, lvl: 18},
+          {mid: 282, type: 2, lvl: 17},    {mid: 288, type: 2, lvl: 13},
+          {mid: 699, type: 3, lvl: 18},    {mid: 595, type: 2, lvl: 17},
+          {mid: 507, type: 2, lvl: 17},    {mid: 1044, type: 2, lvl: 16},
+          {mid: 948, type: 4, lvl: 16},    {mid: 1115, type: 4, lvl: 16},
+          {mid: 1215, type: 2, lvl: 15},   {mid: 1152, type: 2, lvl: 15},
+          {mid: 1282, type: 3, lvl: 17.5}, {mid: 1343, type: 2, lvl: 16},
+          {mid: 1300, type: 3, lvl: 17.5}, {mid: 1938, type: 2, lvl: 18},
+        ];
+
+        const v6Scores =
+            await APIFind(plugin, refid, {collection: 'music', version: 6});
+        for (const rec of v6Scores) {
+          const song =
+              mdb.mdb.music.find((s: any) => String(s.id) === String(rec.mid));
+          if (!song) continue;
+
+          let diffLevel = parseFloat(song.difficulty[diffName[rec.type]]) || 0;
+          const lvOverride = levelDifOverride.find(
+              d => d.mid === rec.mid && d.type === rec.type);
+          if (lvOverride) diffLevel = lvOverride.lvl;
+
+          const resetExScore = exScoreResetList.some(
+              d => d.id === rec.mid && d.type === rec.type);
+          const exscore = resetExScore ? 0 : rec.exscore || 0;
+          const clear = nblClearLamp[rec.clear] ?? rec.clear;
+
+          await APIUpsert(
+              plugin, refid,
+              {collection: 'music', mid: rec.mid, type: rec.type, version: 7}, {
+                $set: {
+                  score: rec.score,
+                  exscore,
+                  clear,
+                  grade: rec.grade,
+                  volforce:
+                      computeForce(diffLevel, rec.score, clear, rec.grade),
+                  buttonRate: rec.buttonRate,
+                  longRate: rec.longRate,
+                  volRate: rec.volRate,
+                },
+              });
+        }
+
+        migrated = true;
+      }
+
+      const scores =
+          await APIFind(plugin, refid, {collection: 'music', version: 7});
+
+      let updated = 0;
+      for (const score of scores) {
+        const song =
+            mdb.mdb.music.find((s: any) => String(s.id) === String(score.mid));
+        if (!song) continue;
+
+        const typeIndex = score.type;
+        const key = typeIndex === 4 ?
+            song.difficulty.maximum || song.difficulty.infinite :
+            song.difficulty[diffName[typeIndex]];
+        const diffLevel = parseFloat(key) || 0;
+        if (diffLevel === 0) continue;
+
+        const newVf =
+            computeForce(diffLevel, score.score, score.clear, score.grade);
+        if (newVf !== score.volforce) {
+          await APIUpdate(
+              plugin, refid, {
                 collection: 'music',
                 mid: score.mid,
                 type: score.type,
-                version: score.version || 6,
+                version: 7
               },
-              { $set: update }
-            );
-            saved++;
-          } else {
-            skipped++;
-          }
-          continue;
+              {$set: {volforce: newVf}});
+          updated++;
         }
-
-        await APIInsert(plugin, refid, {
-          collection: 'music',
-          mid: score.mid,
-          type: score.type,
-          score: score.score || 0,
-          clear: score.clear || 0,
-          exscore: score.exscore || 0,
-          grade: score.grade || 0,
-          buttonRate: score.buttonRate || 0,
-          longRate: score.longRate || 0,
-          volRate: score.volRate || 0,
-          volforce: score.volforce || 0,
-          version: score.version || 6,
-          dbver: 1,
-        });
-        saved++;
-      } catch (err) {
-        Logger.error(`Failed to migrate score mid=${score.mid} type=${score.type}: ${err}`);
       }
-    }
 
-    res.json({ success: true, saved, skipped });
-  })
-);
+      res.json({success: true, total: scores.length, updated, migrated});
+    }));
+
+// Score migration from another Asphyxia server
+webui.post(
+    '/migrate/import-scores', json({limit: '50mb'}), wrap(async (req, res) => {
+      const {refid, scores} = req.body;
+      if (!refid || !scores || !Array.isArray(scores)) {
+        return res.status(400).json(
+            {success: false, description: 'Missing refid or scores'});
+      }
+
+      const isAdmin = req.session.user!.admin;
+      const isOwner = await userOwnsProfile(req, refid);
+      if (!isAdmin && !isOwner) return res.sendStatus(403);
+
+      const plugin = {identifier: 'sdvx@asphyxia', core: false};
+      let saved = 0;
+      let skipped = 0;
+
+      const EG_CLEAR_RANK:
+          Record<number, number> = {0: 0, 1: 1, 2: 2, 3: 3, 6: 4, 4: 5, 5: 6};
+      const NABLA_CLEAR_RANK:
+          Record<number, number> = {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6};
+      function clearRank(c: number, version?: number) {
+        const map = version === 7 ? NABLA_CLEAR_RANK : EG_CLEAR_RANK;
+        return map[c] ?? 0;
+      }
+
+      for (const score of scores) {
+        try {
+          const existing = await APIFind(plugin, refid, {
+            collection: 'music',
+            mid: score.mid,
+            type: score.type,
+            version: score.version || 6,
+          });
+
+          if (existing && existing.length > 0) {
+            const ex = existing[0];
+            const update: any = {};
+            if (score.score > ex.score) {
+              update.score = score.score;
+              update.buttonRate = score.buttonRate || 0;
+              update.longRate = score.longRate || 0;
+              update.volRate = score.volRate || 0;
+            }
+            if (clearRank(score.clear, score.version) >
+                clearRank(ex.clear, ex.version))
+              update.clear = score.clear;
+            if (score.grade && (!ex.grade || score.grade > ex.grade))
+              update.grade = score.grade;
+            if (score.exscore && (!ex.exscore || score.exscore > ex.exscore))
+              update.exscore = score.exscore;
+            if (score.volforce &&
+                (!ex.volforce || score.volforce > ex.volforce))
+              update.volforce = score.volforce;
+
+            if (Object.keys(update).length > 0) {
+              await APIUpdate(
+                  plugin, refid, {
+                    collection: 'music',
+                    mid: score.mid,
+                    type: score.type,
+                    version: score.version || 6,
+                  },
+                  {$set: update});
+              saved++;
+            } else {
+              skipped++;
+            }
+            continue;
+          }
+
+          await APIInsert(plugin, refid, {
+            collection: 'music',
+            mid: score.mid,
+            type: score.type,
+            score: score.score || 0,
+            clear: score.clear || 0,
+            exscore: score.exscore || 0,
+            grade: score.grade || 0,
+            buttonRate: score.buttonRate || 0,
+            longRate: score.longRate || 0,
+            volRate: score.volRate || 0,
+            volforce: score.volforce || 0,
+            version: score.version || 6,
+            dbver: 1,
+          });
+          saved++;
+        } catch (err) {
+          Logger.error(`Failed to migrate score mid=${score.mid} type=${
+              score.type}: ${err}`);
+        }
+      }
+
+      res.json({success: true, saved, skipped});
+    }));
 
 // Export savedata for migration to another Asphyxia server
-webui.get(
-  '/migrate/export-savedata',
-  wrap(async (req, res) => {
-    const refid = req.query.refid as string;
-    if (!refid) {
-      return res.status(400).json({ success: false, description: 'Missing refid' });
-    }
+webui.get('/migrate/export-savedata', wrap(async (req, res) => {
+            const refid = req.query.refid as string;
+            if (!refid) {
+              return res.status(400).json(
+                  {success: false, description: 'Missing refid'});
+            }
 
-    const isAdmin = req.session.user!.admin;
-    const isOwner = await userOwnsProfile(req, refid);
-    if (!isAdmin && !isOwner) return res.sendStatus(403);
+            const isAdmin = req.session.user!.admin;
+            const isOwner = await userOwnsProfile(req, refid);
+            if (!isAdmin && !isOwner) return res.sendStatus(403);
 
-    // Gather core.db documents (profile + cards)
-    const profile = await FindProfile(refid);
-    if (!profile) {
-      return res.status(404).json({ success: false, description: 'Profile not found' });
-    }
-    const cards = await FindCardsByRefid(refid);
+            // Gather core.db documents (profile + cards)
+            const profile = await FindProfile(refid);
+            if (!profile) {
+              return res.status(404).json(
+                  {success: false, description: 'Profile not found'});
+            }
+            const cards = await FindCardsByRefid(refid);
 
-    // Gather sdvx@asphyxia.db documents (all plugin data for this refid)
-    // core: true preserves __s, __refid, _id, createdAt, updatedAt fields
-    const sdvxPlugin = { identifier: 'sdvx@asphyxia', core: true };
-    const pluginDocs = await APIFind(sdvxPlugin, refid, {});
+            // Gather sdvx@asphyxia.db documents (all plugin data for this
+            // refid) core: true preserves __s, __refid, _id, createdAt,
+            // updatedAt fields
+            const sdvxPlugin = {identifier: 'sdvx@asphyxia', core: true};
+            const pluginDocs = await APIFind(sdvxPlugin, refid, {});
 
-    // Format as NeDB (one JSON per line, using NeDB's serialize for correct Date handling)
-    const coreLines: string[] = [];
-    coreLines.push(nedbSerialize(profile));
-    if (cards && Array.isArray(cards)) {
-      for (const card of cards) {
-        coreLines.push(nedbSerialize(card));
-      }
-    }
-    const coreContent = coreLines.join('\n') + '\n';
+            // Format as NeDB (one JSON per line, using NeDB's serialize for
+            // correct Date handling)
+            const coreLines: string[] = [];
+            coreLines.push(nedbSerialize(profile));
+            if (cards && Array.isArray(cards)) {
+              for (const card of cards) {
+                coreLines.push(nedbSerialize(card));
+              }
+            }
+            const coreContent = coreLines.join('\n') + '\n';
 
-    const sdvxLines: string[] = [];
-    if (pluginDocs && Array.isArray(pluginDocs)) {
-      for (const doc of pluginDocs) {
-        sdvxLines.push(nedbSerialize(doc));
-      }
-    }
-    const sdvxContent = sdvxLines.join('\n') + '\n';
+            const sdvxLines: string[] = [];
+            if (pluginDocs && Array.isArray(pluginDocs)) {
+              for (const doc of pluginDocs) {
+                sdvxLines.push(nedbSerialize(doc));
+              }
+            }
+            const sdvxContent = sdvxLines.join('\n') + '\n';
 
-    // Create zip with maximum compression
-    const archive = archiver('zip', { zlib: { level: 9 } });
+            // Create zip with maximum compression
+            const archive = archiver('zip', {zlib: {level: 9}});
 
-    archive.on('error', (err: Error) => {
-      Logger.error(`Export zip generation failed: ${err}`);
-      if (!res.headersSent) {
-        res.status(500).json({ success: false, description: 'Zip generation failed' });
-      }
-    });
+            archive.on('error', (err: Error) => {
+              Logger.error(`Export zip generation failed: ${err}`);
+              if (!res.headersSent) {
+                res.status(500).json(
+                    {success: false, description: 'Zip generation failed'});
+              }
+            });
 
-    res.set('Content-Type', 'application/zip');
-    res.set('Content-Disposition', 'attachment; filename="savedata.zip"');
+            res.set('Content-Type', 'application/zip');
+            res.set(
+                'Content-Disposition', 'attachment; filename="savedata.zip"');
 
-    archive.pipe(res);
-    archive.append(coreContent, { name: 'savedata/core.db' });
-    archive.append(sdvxContent, { name: 'savedata/sdvx@asphyxia.db' });
-    await archive.finalize();
-  })
-);
+            archive.pipe(res);
+            archive.append(coreContent, {name: 'savedata/core.db'});
+            archive.append(sdvxContent, {name: 'savedata/sdvx@asphyxia.db'});
+            await archive.finalize();
+          }));
 
 webui.use('/fun', fun);
 webui.use('/', emit);
@@ -1497,9 +1379,9 @@ function data(req: Request, title: string, plugin: string, attr?: any) {
 
   let formMessage = null;
   if (formOk.length > 0) {
-    formMessage = { danger: false, message: formOk.join(' ') };
+    formMessage = {danger: false, message: formOk.join(' ')};
   } else if (formWarn.length > 0) {
-    formMessage = { danger: true, message: formWarn.join(' ') };
+    formMessage = {danger: true, message: formWarn.join(' ')};
   }
 
   return {
@@ -1516,9 +1398,11 @@ function data(req: Request, title: string, plugin: string, attr?: any) {
         name: p.Name,
         id: p.Identifier,
         webOnly: p.GameCodes.length == 0,
-        pages: p.Pages.filter(f => req.session.user?.admin || !ADMIN_ONLY_PAGES.includes(f)).map(
-          f => ({ name: startCase(f), link: f })
-        ),
+        pages: p.Pages
+                   .filter(
+                       f => req.session.user?.admin ||
+                           !ADMIN_ONLY_PAGES.includes(f))
+                   .map(f => ({name: startCase(f), link: f})),
       };
     }),
     ...attr,
@@ -1591,11 +1475,11 @@ function DataFileCheck(plugin: string) {
     const target = path.resolve(PLUGIN_PATH, plugin, filepath);
     const filename = path.basename(target);
     const uploaded = existsSync(target);
-    const config = { ...c };
+    const config = {...c};
     if (!c.name) {
       config.name = filename;
     }
-    files.push({ ...config, path: filepath, uploaded, filename });
+    files.push({...config, path: filepath, uploaded, filename});
   }
 
   return files;
@@ -1606,602 +1490,563 @@ webui.get('/favicon.ico', async (req, res) => {
 });
 
 webui.get(
-  '/',
-  wrap(async (req, res) => {
-    const memory = `${(process.memoryUsage().rss / 1048576).toFixed(2)}MB`;
-    const config = ConfigData('core');
+    '/', wrap(async (req, res) => {
+      const memory = `${(process.memoryUsage().rss / 1048576).toFixed(2)}MB`;
+      const config = ConfigData('core');
 
-    const changelog = markdown.makeHtml(ReadAssets('changelog.md'));
+      const changelog = markdown.makeHtml(ReadAssets('changelog.md'));
 
-    const profiles = await GetProfileCount();
-    res.render('index', data(req, 'Dashboard', 'core', { memory, config, changelog, profiles }));
-  })
-);
+      const profiles = await GetProfileCount();
+      res.render(
+          'index',
+          data(
+              req, 'Dashboard', 'core', {memory, config, changelog, profiles}));
+    }));
 
-webui.get(
-  '/my-profile',
-  wrap(async (req, res) => {
-    const cardNumber = req.session.user!.cardNumber;
-    if (cardNumber) {
-      const card = await FindCard(cardNumber);
-      if (card && card.__refid) {
-        return res.redirect(`/profile/${card.__refid}`);
-      }
-    }
-    return res.redirect('/');
-  })
-);
+webui.get('/my-profile', wrap(async (req, res) => {
+            const cardNumber = req.session.user!.cardNumber;
+            if (cardNumber) {
+              const card = await FindCard(cardNumber);
+              if (card && card.__refid) {
+                return res.redirect(`/profile/${card.__refid}`);
+              }
+            }
+            return res.redirect('/');
+          }));
 
-webui.get(
-  '/profiles',
-  wrap(async (req, res) => {
-    if (!req.session.user!.admin) return res.redirect('/');
-    const profiles = (await GetProfiles()) || [];
-    const isAdmin = req.session.user!.admin;
-    for (const profile of profiles) {
-      profile.cards = await Count({ __s: 'card', __refid: profile.__refid });
-      profile.isOwner = await userOwnsProfile(req, profile.__refid);
-    }
-    res.render('profiles', data(req, 'Profiles', 'core', { profiles, isAdmin }));
-  })
-);
+webui.get('/profiles', wrap(async (req, res) => {
+            if (!req.session.user!.admin) return res.redirect('/');
+            const profiles = (await GetProfiles()) || [];
+            const isAdmin = req.session.user!.admin;
+            for (const profile of profiles) {
+              profile.cards =
+                  await Count({__s: 'card', __refid: profile.__refid});
+              profile.isOwner = await userOwnsProfile(req, profile.__refid);
+            }
+            res.render(
+                'profiles', data(req, 'Profiles', 'core', {profiles, isAdmin}));
+          }));
 
-webui.delete(
-  '/profile/:refid',
-  wrap(async (req, res) => {
-    const refid = req.params['refid'];
+webui.delete('/profile/:refid', wrap(async (req, res) => {
+               const refid = req.params['refid'];
 
-    if (await PurgeProfile(refid)) {
-      return res.sendStatus(200);
-    } else {
-      return res.sendStatus(404);
-    }
-  })
-);
+               if (await PurgeProfile(refid)) {
+                 return res.sendStatus(200);
+               } else {
+                 return res.sendStatus(404);
+               }
+             }));
 
-webui.get(
-  '/profile/:refid',
-  wrap(async (req, res, next) => {
-    const refid = req.params['refid'];
+webui.get('/profile/:refid', wrap(async (req, res, next) => {
+            const refid = req.params['refid'];
 
-    const profile = await FindProfile(refid);
-    if (!profile) {
-      return next();
-    }
+            const profile = await FindProfile(refid);
+            if (!profile) {
+              return next();
+            }
 
-    const isAdmin = req.session.user!.admin;
-    const isOwner = await userOwnsProfile(req, refid);
-    if (!isAdmin && !isOwner) return res.redirect('/');
+            const isAdmin = req.session.user!.admin;
+            const isOwner = await userOwnsProfile(req, refid);
+            if (!isAdmin && !isOwner) return res.redirect('/');
 
-    profile.cards = await FindCardsByRefid(refid);
+            profile.cards = await FindCardsByRefid(refid);
 
-    res.render(
-      'profiles_profile',
-      data(req, 'Profiles', 'core', { profile, subtitle: profile.name, isAdmin, isOwner })
-    );
-  })
-);
+            res.render(
+                'profiles_profile',
+                data(
+                    req, 'Profiles', 'core',
+                    {profile, subtitle: profile.name, isAdmin, isOwner}));
+          }));
 
-webui.delete(
-  '/card/:cid',
-  wrap(async (req, res) => {
-    const cid = req.params['cid'];
+webui.delete('/card/:cid', wrap(async (req, res) => {
+               const cid = req.params['cid'];
 
-    if (await DeleteCard(cid)) {
-      return res.sendStatus(200);
-    } else {
-      return res.sendStatus(404);
-    }
-  })
-);
+               if (await DeleteCard(cid)) {
+                 return res.sendStatus(200);
+               } else {
+                 return res.sendStatus(404);
+               }
+             }));
 
 webui.post(
-  '/profile/:refid/card',
-  json({ limit: '50mb' }),
-  wrap(async (req, res) => {
-    const refid = req.params['refid'];
-    if (!req.session.user!.admin && !(await userOwnsProfile(req, refid)))
-      return res.sendStatus(403);
-    const card = req.body.cid;
+    '/profile/:refid/card', json({limit: '50mb'}), wrap(async (req, res) => {
+      const refid = req.params['refid'];
+      if (!req.session.user!.admin && !(await userOwnsProfile(req, refid)))
+        return res.sendStatus(403);
+      const card = req.body.cid;
 
-    try {
-      const cid = card;
-      const print = nfc2card(cid);
+      try {
+        const cid = card;
+        const print = nfc2card(cid);
 
-      if (!(await FindCard(cid))) {
-        await CreateCard(cid, refid, print);
+        if (!(await FindCard(cid))) {
+          await CreateCard(cid, refid, print);
+        }
+      } catch {
       }
-    } catch { }
 
-    try {
-      const print = card
-        .toUpperCase()
-        .trim()
-        .replace(/[\s\-]/g, '')
-        .replace(/O/g, '0')
-        .replace(/I/g, '1');
-      const cid = card2nfc(print);
-      if (cardType(cid) >= 0 && !(await FindCard(cid))) {
-        await CreateCard(cid, refid, print);
+      try {
+        const print = card.toUpperCase()
+                          .trim()
+                          .replace(/[\s\-]/g, '')
+                          .replace(/O/g, '0')
+                          .replace(/I/g, '1');
+        const cid = card2nfc(print);
+        if (cardType(cid) >= 0 && !(await FindCard(cid))) {
+          await CreateCard(cid, refid, print);
+        }
+      } catch {
       }
-    } catch { }
 
-    res.sendStatus(200);
-  })
-);
+      res.sendStatus(200);
+    }));
 
 webui.post(
-  '/profile/:refid',
-  urlencoded({ extended: true, limit: '50mb' }),
-  wrap(async (req, res) => {
-    const refid = req.params['refid'];
-    if (!req.session.user!.admin && !(await userOwnsProfile(req, refid)))
-      return res.sendStatus(403);
-    const update: any = {};
-    if (req.body.pin) {
-      update.pin = req.body.pin;
-    }
-    if (req.body.name) {
-      update.name = req.body.name;
-    }
+    '/profile/:refid', urlencoded({extended: true, limit: '50mb'}),
+    wrap(async (req, res) => {
+      const refid = req.params['refid'];
+      if (!req.session.user!.admin && !(await userOwnsProfile(req, refid)))
+        return res.sendStatus(403);
+      const update: any = {};
+      if (req.body.pin) {
+        update.pin = req.body.pin;
+      }
+      if (req.body.name) {
+        update.name = req.body.name;
+      }
 
-    await UpdateProfile(refid, update);
-    req.flash('formOk', 'Updated');
-    res.redirect(req.originalUrl);
-  })
-);
+      await UpdateProfile(refid, update);
+      req.flash('formOk', 'Updated');
+      res.redirect(req.originalUrl);
+    }));
 
 // Data Management
-webui.get(
-  '/data',
-  wrap(async (req, res) => {
-    if (!req.session.user?.admin) {
-      return res.redirect('/');
-    }
-    const pluginStats = await PluginStats();
-    const installed = ROOT_CONTAINER.Plugins.map(p => p.Identifier);
-    res.render(
-      'data',
-      data(req, 'Data Management', 'core', { pluginStats, installed, dev: ARGS.dev })
-    );
-  })
-);
+webui.get('/data', wrap(async (req, res) => {
+            if (!req.session.user?.admin) {
+              return res.redirect('/');
+            }
+            const pluginStats = await PluginStats();
+            const installed = ROOT_CONTAINER.Plugins.map(p => p.Identifier);
+            res.render(
+                'data',
+                data(
+                    req, 'Data Management', 'core',
+                    {pluginStats, installed, dev: ARGS.dev}));
+          }));
 
-webui.get(
-  '/data/:plugin',
-  wrap(async (req, res, next) => {
-    if (!ARGS.dev) {
-      next();
-      return;
-    }
-    const pluginID = req.params['plugin'];
+webui.get('/data/:plugin', wrap(async (req, res, next) => {
+            if (!ARGS.dev) {
+              next();
+              return;
+            }
+            const pluginID = req.params['plugin'];
 
-    res.render('data_plugin', data(req, 'Data Management', 'core', { subtitle: pluginID }));
-  })
-);
+            res.render(
+                'data_plugin',
+                data(req, 'Data Management', 'core', {subtitle: pluginID}));
+          }));
 
-webui.post(
-  '/data/db',
-  json({ limit: '50mb' }),
-  wrap(async (req, res, next) => {
-    if (!ARGS.dev) {
-      next();
-      return;
-    }
-    const command = req.body.command;
-    const args = req.body.args;
-    const plugin = req.body.plugin;
+webui.post('/data/db', json({limit: '50mb'}), wrap(async (req, res, next) => {
+             if (!ARGS.dev) {
+               next();
+               return;
+             }
+             const command = req.body.command;
+             const args = req.body.args;
+             const plugin = req.body.plugin;
 
-    try {
-      switch (command) {
-        case 'FindOne':
-          res.json(await (APIFindOne as any)({ identifier: plugin, core: false }, ...args));
-          break;
-        case 'Find':
-          res.json(await (APIFind as any)({ identifier: plugin, core: false }, ...args));
-          break;
-        case 'Insert':
-          res.json(await (APIInsert as any)({ identifier: plugin, core: false }, ...args));
-          break;
-        case 'Remove':
-          res.json(await (APIRemove as any)({ identifier: plugin, core: false }, ...args));
-          break;
-        case 'Update':
-          res.json(await (APIUpdate as any)({ identifier: plugin, core: false }, ...args));
-          break;
-        case 'Upsert':
-          res.json(await (APIUpsert as any)({ identifier: plugin, core: false }, ...args));
-          break;
-        case 'Count':
-          res.json(await (APICount as any)({ identifier: plugin, core: false }, ...args));
-          break;
-      }
-    } catch (err) {
-      res.json({ error: err.toString() });
-    }
-  })
-);
+             try {
+               switch (command) {
+                 case 'FindOne':
+                   res.json(await (APIFindOne as any)(
+                       {identifier: plugin, core: false}, ...args));
+                   break;
+                 case 'Find':
+                   res.json(await (APIFind as any)(
+                       {identifier: plugin, core: false}, ...args));
+                   break;
+                 case 'Insert':
+                   res.json(await (APIInsert as any)(
+                       {identifier: plugin, core: false}, ...args));
+                   break;
+                 case 'Remove':
+                   res.json(await (APIRemove as any)(
+                       {identifier: plugin, core: false}, ...args));
+                   break;
+                 case 'Update':
+                   res.json(await (APIUpdate as any)(
+                       {identifier: plugin, core: false}, ...args));
+                   break;
+                 case 'Upsert':
+                   res.json(await (APIUpsert as any)(
+                       {identifier: plugin, core: false}, ...args));
+                   break;
+                 case 'Count':
+                   res.json(await (APICount as any)(
+                       {identifier: plugin, core: false}, ...args));
+                   break;
+               }
+             } catch (err) {
+               res.json({error: err.toString()});
+             }
+           }));
 
-webui.delete(
-  '/data/:plugin',
-  wrap(async (req, res) => {
-    const pluginID = req.params['plugin'];
-    if (pluginID && pluginID.length > 0) await PurgePlugin(pluginID);
+webui.delete('/data/:plugin', wrap(async (req, res) => {
+               const pluginID = req.params['plugin'];
+               if (pluginID && pluginID.length > 0) await PurgePlugin(pluginID);
 
-    const plugin = ROOT_CONTAINER.getPluginByID(pluginID);
-    if (plugin) {
-      // Re-register for init data
-      try {
-        plugin.Register();
-      } catch (err) {
-        Logger.error(err, { plugin: pluginID });
-      }
-    }
-    res.sendStatus(200);
-  })
-);
+               const plugin = ROOT_CONTAINER.getPluginByID(pluginID);
+               if (plugin) {
+                 // Re-register for init data
+                 try {
+                   plugin.Register();
+                 } catch (err) {
+                   Logger.error(err, {plugin: pluginID});
+                 }
+               }
+               res.sendStatus(200);
+             }));
 
-webui.get(
-  '/about',
-  wrap(async (req, res) => {
-    const contributors = new Map<string, { name: string; link?: string }>();
-    for (const plugin of ROOT_CONTAINER.Plugins) {
-      for (const c of plugin.Contributors) {
-        contributors.set(c.name, c);
-      }
-    }
-    res.render(
-      'about',
-      data(req, 'About', 'core', { contributors: Array.from(contributors.values()) })
-    );
-  })
-);
+webui.get('/about', wrap(async (req, res) => {
+            const contributors = new Map < string, {
+              name: string;
+              link?: string
+            }
+            > ();
+            for (const plugin of ROOT_CONTAINER.Plugins) {
+              for (const c of plugin.Contributors) {
+                contributors.set(c.name, c);
+              }
+            }
+            res.render('about', data(req, 'About', 'core', {
+                         contributors: Array.from(contributors.values())
+                       }));
+          }));
 
 // Plugin Overview
 webui.get(
-  '/plugin/:plugin',
-  wrap(async (req, res, next) => {
-    const plugin = ROOT_CONTAINER.getPluginByID(req.params['plugin']);
+    '/plugin/:plugin', wrap(async (req, res, next) => {
+      const plugin = ROOT_CONTAINER.getPluginByID(req.params['plugin']);
 
-    if (!plugin) {
-      return next();
-    }
-
-    const readmePath = path.join(PLUGIN_PATH, plugin.Identifier, 'README.md');
-    let readme = null;
-    try {
-      if (existsSync(readmePath)) {
-        readme = markdown.makeHtml(readFileSync(readmePath, { encoding: 'utf-8' }));
+      if (!plugin) {
+        return next();
       }
-    } catch {
-      readme = null;
-    }
 
-    const config = ConfigData(plugin.Identifier);
-    const datafile = DataFileCheck(plugin.Identifier);
-    const contributors = plugin ? plugin.Contributors : [];
-    const gameCodes = plugin ? plugin.GameCodes : [];
+      const readmePath = path.join(PLUGIN_PATH, plugin.Identifier, 'README.md');
+      let readme = null;
+      try {
+        if (existsSync(readmePath)) {
+          readme =
+              markdown.makeHtml(readFileSync(readmePath, {encoding: 'utf-8'}));
+        }
+      } catch {
+        readme = null;
+      }
 
-    res.render(
-      'plugin',
-      data(req, plugin.Name, plugin.Identifier, {
-        readme,
-        config,
-        datafile,
-        contributors,
-        gameCodes,
-        subtitle: 'Overview',
-        subidentifier: 'overview',
-      })
-    );
-  })
-);
+      const config = ConfigData(plugin.Identifier);
+      const datafile = DataFileCheck(plugin.Identifier);
+      const contributors = plugin ? plugin.Contributors : [];
+      const gameCodes = plugin ? plugin.GameCodes : [];
+
+      res.render('plugin', data(req, plugin.Name, plugin.Identifier, {
+                   readme,
+                   config,
+                   datafile,
+                   contributors,
+                   gameCodes,
+                   subtitle: 'Overview',
+                   subidentifier: 'overview',
+                 }));
+    }));
 
 webui.delete(
-  '/plugin/:plugin/profile/:refid',
-  wrap(async (req, res) => {
-    const plugin = ROOT_CONTAINER.getPluginByID(req.params['plugin']);
+    '/plugin/:plugin/profile/:refid', wrap(async (req, res) => {
+      const plugin = ROOT_CONTAINER.getPluginByID(req.params['plugin']);
 
-    if (!plugin) {
-      return res.sendStatus(404);
-    }
+      if (!plugin) {
+        return res.sendStatus(404);
+      }
 
-    const refid = req.params['refid'];
-    if (!refid || refid.length < 0) {
-      return res.sendStatus(400);
-    }
+      const refid = req.params['refid'];
+      if (!refid || refid.length < 0) {
+        return res.sendStatus(400);
+      }
 
-    const isAdmin = req.session.user!.admin;
-    const isOwner = await userOwnsProfile(req, refid);
-    if (!isAdmin && !isOwner) return res.sendStatus(403);
+      const isAdmin = req.session.user!.admin;
+      const isOwner = await userOwnsProfile(req, refid);
+      if (!isAdmin && !isOwner) return res.sendStatus(403);
 
-    if (await APIRemove({ identifier: plugin.Identifier, core: true }, refid, {})) {
-      return res.sendStatus(200);
-    } else {
-      return res.sendStatus(404);
-    }
-  })
-);
+      if (await APIRemove(
+              {identifier: plugin.Identifier, core: true}, refid, {})) {
+        return res.sendStatus(200);
+      } else {
+        return res.sendStatus(404);
+      }
+    }));
 
 // Plugin statics
-webui.get(
-  '/plugin/:plugin/static/*',
-  wrap(async (req, res, next) => {
-    const data = req.params[0];
+webui.get('/plugin/:plugin/static/*', wrap(async (req, res, next) => {
+            const data = req.params[0];
 
-    if (data.startsWith('.')) {
-      return next();
-    }
+            if (data.startsWith('.')) {
+              return next();
+            }
 
-    const plugin = ROOT_CONTAINER.getPluginByID(req.params['plugin']);
+            const plugin = ROOT_CONTAINER.getPluginByID(req.params['plugin']);
 
-    if (!plugin) {
-      return next();
-    }
+            if (!plugin) {
+              return next();
+            }
 
-    const file = path.join(PLUGIN_PATH, plugin.Identifier, 'webui', data);
+            const file =
+                path.join(PLUGIN_PATH, plugin.Identifier, 'webui', data);
 
-    res.sendFile(file, {}, err => {
-      if (err) {
-        next();
-      }
-    });
-  })
-);
+            res.sendFile(file, {}, err => {
+              if (err) {
+                next();
+              }
+            });
+          }));
 
 // Plugin My Profile (redirect to own profile)
 webui.get(
-  '/plugin/:plugin/my-profile',
-  wrap(async (req, res, next) => {
-    const plugin = ROOT_CONTAINER.getPluginByID(req.params['plugin']);
-    if (!plugin) return next();
+    '/plugin/:plugin/my-profile', wrap(async (req, res, next) => {
+      const plugin = ROOT_CONTAINER.getPluginByID(req.params['plugin']);
+      if (!plugin) return next();
 
-    const cardNumber = req.session.user!.cardNumber;
-    if (cardNumber) {
-      const card = await FindCard(cardNumber);
-      if (card && card.__refid) {
-        return res.redirect(`/plugin/${req.params['plugin']}/profile?refid=${card.__refid}`);
+      const cardNumber = req.session.user!.cardNumber;
+      if (cardNumber) {
+        const card = await FindCard(cardNumber);
+        if (card && card.__refid) {
+          return res.redirect(
+              `/plugin/${req.params['plugin']}/profile?refid=${card.__refid}`);
+        }
       }
-    }
-    return res.redirect(`/plugin/${req.params['plugin']}`);
-  })
-);
+      return res.redirect(`/plugin/${req.params['plugin']}`);
+    }));
 
 // Plugin Profiles
 webui.get(
-  '/plugin/:plugin/profiles',
-  wrap(async (req, res, next) => {
-    if (!req.session.user!.admin) return res.redirect('/');
+    '/plugin/:plugin/profiles', wrap(async (req, res, next) => {
+      if (!req.session.user!.admin) return res.redirect('/');
 
-    const plugin = ROOT_CONTAINER.getPluginByID(req.params['plugin']);
+      const plugin = ROOT_CONTAINER.getPluginByID(req.params['plugin']);
 
-    if (!plugin) {
-      return next();
-    }
-
-    const profiles = groupBy(
-      await APIFind({ identifier: plugin.Identifier, core: true }, null, {}),
-      '__refid'
-    );
-
-    const profileData: any[] = [];
-    for (const refid in profiles) {
-      let name = undefined;
-      for (const doc of profiles[refid]) {
-        if (doc.__refid == null) {
-          PurgeProfile(doc.__refid);
-          break;
-        }
-        if (typeof doc.name == 'string') {
-          name = doc.name;
-          break;
-        }
+      if (!plugin) {
+        return next();
       }
 
-      profileData.push({
-        refid,
-        name,
-        dataSize: sizeof(profiles[refid], true),
-        coreProfile: await FindProfile(refid),
-        isOwner: await userOwnsProfile(req, refid),
-      });
-    }
+      const profiles = groupBy(
+          await APIFind({identifier: plugin.Identifier, core: true}, null, {}),
+          '__refid');
 
-    const isAdmin = req.session.user!.admin;
+      const profileData: any[] = [];
+      for (const refid in profiles) {
+        let name = undefined;
+        for (const doc of profiles[refid]) {
+          if (doc.__refid == null) {
+            PurgeProfile(doc.__refid);
+            break;
+          }
+          if (typeof doc.name == 'string') {
+            name = doc.name;
+            break;
+          }
+        }
 
-    res.render(
-      'plugin_profiles',
-      data(req, plugin.Name, plugin.Identifier, {
-        subtitle: 'Profiles',
-        subidentifier: 'profiles',
-        hasCustomPage: plugin.FirstProfilePage != null,
-        profiles: profileData,
-        isAdmin,
-      })
-    );
-  })
-);
+        profileData.push({
+          refid,
+          name,
+          dataSize: sizeof(profiles[refid], true),
+          coreProfile: await FindProfile(refid),
+          isOwner: await userOwnsProfile(req, refid),
+        });
+      }
+
+      const isAdmin = req.session.user!.admin;
+
+      res.render('plugin_profiles', data(req, plugin.Name, plugin.Identifier, {
+                   subtitle: 'Profiles',
+                   subidentifier: 'profiles',
+                   hasCustomPage: plugin.FirstProfilePage != null,
+                   profiles: profileData,
+                   isAdmin,
+                 }));
+    }));
 
 // Plugin Profile Page
 webui.get(
-  '/plugin/:plugin/profile',
-  wrap(async (req, res, next) => {
-    const plugin = ROOT_CONTAINER.getPluginByID(req.params['plugin']);
+    '/plugin/:plugin/profile', wrap(async (req, res, next) => {
+      const plugin = ROOT_CONTAINER.getPluginByID(req.params['plugin']);
 
-    if (!plugin) {
-      return next();
-    }
+      if (!plugin) {
+        return next();
+      }
 
-    const refid = req.query['refid'];
+      const refid = req.query['refid'];
 
-    if (refid == null) {
-      return next();
-    }
+      if (refid == null) {
+        return next();
+      }
 
-    const pageName = req.query['page'];
+      const pageName = req.query['page'];
 
-    let page = null;
-    if (pageName == null) {
-      page = plugin.FirstProfilePage;
-    } else {
-      page = `profile_${pageName.toString()}`;
-    }
+      let page = null;
+      if (pageName == null) {
+        page = plugin.FirstProfilePage;
+      } else {
+        page = `profile_${pageName.toString()}`;
+      }
 
-    const isAdmin = req.session.user!.admin;
-    const isOwner = await userOwnsProfile(req, refid.toString());
+      const isAdmin = req.session.user!.admin;
+      const isOwner = await userOwnsProfile(req, refid.toString());
 
-    const ownerOnlyPages = ['profile_tachi', 'profile_nabla', 'profile_migrate'];
-    if (ownerOnlyPages.includes(page) && !isAdmin && !isOwner) {
-      return res.redirect(`/plugin/${req.params['plugin']}/profile?refid=${refid}`);
-    }
+      const ownerOnlyPages =
+          ['profile_tachi', 'profile_nabla', 'profile_migrate'];
+      if (ownerOnlyPages.includes(page) && !isAdmin && !isOwner) {
+        return res.redirect(
+            `/plugin/${req.params['plugin']}/profile?refid=${refid}`);
+      }
 
-    const content = await plugin.render(page, { query: req.query }, refid.toString());
-    if (content == null) {
-      return next();
-    }
+      const content =
+          await plugin.render(page, {query: req.query}, refid.toString());
+      if (content == null) {
+        return next();
+      }
 
-    const tabs = plugin.ProfilePages.filter(
-      p => !ownerOnlyPages.includes(p) || isAdmin || isOwner
-    ).map(p => ({
-      name: startCase(p.substr(8)),
-      link: p.substr(8),
+      const tabs =
+          plugin.ProfilePages
+              .filter(p => !ownerOnlyPages.includes(p) || isAdmin || isOwner)
+              .map(p => ({
+                     name: startCase(p.substr(8)),
+                     link: p.substr(8),
+                   }));
+
+      res.render('custom_profile', data(req, plugin.Name, plugin.Identifier, {
+                   content,
+                   tabs,
+                   subtitle: 'Profiles',
+                   subidentifier: 'profiles',
+                   subsubtitle: startCase(page.substr(8)),
+                   subsubidentifier: page.substr(8),
+                   refid: refid.toString(),
+                   isAdmin,
+                   isOwner,
+                 }));
     }));
-
-    res.render(
-      'custom_profile',
-      data(req, plugin.Name, plugin.Identifier, {
-        content,
-        tabs,
-        subtitle: 'Profiles',
-        subidentifier: 'profiles',
-        subsubtitle: startCase(page.substr(8)),
-        subsubidentifier: page.substr(8),
-        refid: refid.toString(),
-        isAdmin,
-        isOwner,
-      })
-    );
-  })
-);
 
 // Plugin Custom Pages
 webui.get(
-  '/plugin/:plugin/:page',
-  wrap(async (req, res, next) => {
-    const plugin = ROOT_CONTAINER.getPluginByID(req.params['plugin']);
+    '/plugin/:plugin/:page', wrap(async (req, res, next) => {
+      const plugin = ROOT_CONTAINER.getPluginByID(req.params['plugin']);
 
-    if (!plugin) {
-      return next();
-    }
+      if (!plugin) {
+        return next();
+      }
 
-    const pageName = req.params['page'];
+      const pageName = req.params['page'];
 
-    if (ADMIN_ONLY_PAGES.includes(pageName) && !req.session.user!.admin) {
-      return res.redirect('/');
-    }
+      if (ADMIN_ONLY_PAGES.includes(pageName) && !req.session.user!.admin) {
+        return res.redirect('/');
+      }
 
-    const content = await plugin.render(pageName, { query: req.query });
-    if (content == null) {
-      return next();
-    }
+      const content = await plugin.render(pageName, {query: req.query});
+      if (content == null) {
+        return next();
+      }
 
-    res.render(
-      'custom',
-      data(req, plugin.Name, plugin.Identifier, {
-        content,
-        subtitle: startCase(pageName),
-        subidentifier: pageName,
-      })
-    );
-  })
-);
+      res.render('custom', data(req, plugin.Name, plugin.Identifier, {
+                   content,
+                   subtitle: startCase(pageName),
+                   subidentifier: pageName,
+                 }));
+    }));
 
 // General setting update
 webui.post(
-  '*',
-  urlencoded({ extended: true, limit: '50mb' }),
-  wrap(async (req, res) => {
-    const page = req.query.page;
+    '*', urlencoded({extended: true, limit: '50mb'}), wrap(async (req, res) => {
+      const page = req.query.page;
 
-    if (isEmpty(req.body)) {
-      res.sendStatus(400);
-      return;
-    }
+      if (isEmpty(req.body)) {
+        res.sendStatus(400);
+        return;
+      }
 
-    let plugin: string = null;
-    if (req.path == '/') {
-      plugin = 'core';
-    } else if (req.path.startsWith('/plugin/')) {
-      plugin = path.basename(req.path);
-    }
+      let plugin: string = null;
+      if (req.path == '/') {
+        plugin = 'core';
+      } else if (req.path.startsWith('/plugin/')) {
+        plugin = path.basename(req.path);
+      }
 
-    if (plugin == null) {
-      res.redirect(req.originalUrl);
-      return;
-    }
-
-    if (page) {
-      // Custom page form
-    } else {
-      const configMap = CONFIG_MAP[plugin];
-      const configData = plugin == 'core' ? CONFIG : CONFIG[plugin];
-
-      if (configMap == null || configData == null) {
+      if (plugin == null) {
         res.redirect(req.originalUrl);
         return;
       }
 
-      let needRestart = false;
+      if (page) {
+        // Custom page form
+      } else {
+        const configMap = CONFIG_MAP[plugin];
+        const configData = plugin == 'core' ? CONFIG : CONFIG[plugin];
 
-      for (const [key, config] of configMap) {
-        const current = configData[key];
-        if (config.type == 'boolean') {
-          configData[key] = req.body[key] ? true : false;
-        }
-        if (config.type == 'float') {
-          configData[key] = parseFloat(req.body[key]);
-          if (isNaN(configData[key])) {
-            configData[key] = config.default;
-          }
-        }
-        if (config.type == 'integer') {
-          configData[key] = parseInt(req.body[key]);
-          if (isNaN(configData[key])) {
-            configData[key] = config.default;
-          }
-        }
-        if (config.type == 'string') {
-          configData[key] = req.body[key];
+        if (configMap == null || configData == null) {
+          res.redirect(req.originalUrl);
+          return;
         }
 
-        if (current !== configData[key]) {
-          if (!validate(config, configData[key])) {
-            if (config.needRestart) {
-              needRestart = true;
+        let needRestart = false;
+
+        for (const [key, config] of configMap) {
+          const current = configData[key];
+          if (config.type == 'boolean') {
+            configData[key] = req.body[key] ? true : false;
+          }
+          if (config.type == 'float') {
+            configData[key] = parseFloat(req.body[key]);
+            if (isNaN(configData[key])) {
+              configData[key] = config.default;
+            }
+          }
+          if (config.type == 'integer') {
+            configData[key] = parseInt(req.body[key]);
+            if (isNaN(configData[key])) {
+              configData[key] = config.default;
+            }
+          }
+          if (config.type == 'string') {
+            configData[key] = req.body[key];
+          }
+
+          if (current !== configData[key]) {
+            if (!validate(config, configData[key])) {
+              if (config.needRestart) {
+                needRestart = true;
+              }
             }
           }
         }
+
+        if (needRestart) {
+          req.flash(
+              'formWarn', 'Some settings require a restart to be applied.');
+        } else {
+          req.flash('formOk', 'Updated');
+        }
+
+        SaveConfig();
       }
 
-      if (needRestart) {
-        req.flash('formWarn', 'Some settings require a restart to be applied.');
-      } else {
-        req.flash('formOk', 'Updated');
-      }
-
-      SaveConfig();
-    }
-
-    res.redirect(req.originalUrl);
-  })
-);
+      res.redirect(req.originalUrl);
+    }));
 
 // 404
 webui.use(async (req, res, next) => {
-  return res.status(404).render('404', data(req, '404 - Are you lost?', 'core'));
+  return res.status(404).render(
+      '404', data(req, '404 - Are you lost?', 'core'));
 });
 
 // 500 - Any server error
 webui.use((err: any, req: any, res: any, next: any) => {
-  return res.status(500).render('500', data(req, '500 - Oops', 'core', { err }));
+  return res.status(500).render('500', data(req, '500 - Oops', 'core', {err}));
 });

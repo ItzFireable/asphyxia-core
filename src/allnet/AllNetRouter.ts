@@ -7,6 +7,7 @@ import * as zlib from 'zlib';
 
 export const AllNetRouter = (plugins: CorePlugin[]) => {
     const router = Router();
+
     const decodeDFI = (data: string): string => {
         try {
             const compressed = Buffer.from(data, 'base64');
@@ -19,7 +20,6 @@ export const AllNetRouter = (plugins: CorePlugin[]) => {
 
     const encodeDFI = (data: string): Buffer => {
         const compressed = zlib.deflateSync(Buffer.from(data, 'utf-8'));
-        // artemis appends \r\n after the base64 blob — match that behaviour
         return Buffer.concat([
             Buffer.from(compressed.toString('base64'), 'utf-8'),
             Buffer.from('\r\n', 'utf-8'),
@@ -36,6 +36,11 @@ export const AllNetRouter = (plugins: CorePlugin[]) => {
 
     const toResponseStr = (obj: Record<string, string>): string =>
         Object.entries(obj).map(([k, v]) => `${k}=${v}`).join('&') + '\n';
+
+    const resolveHostname = (): string =>
+        (CONFIG.sega_hostname && CONFIG.sega_hostname.trim())
+            ? CONFIG.sega_hostname.trim()
+            : 'naominet.jp';
 
     const ensureCabinet = async (serial: string): Promise<void> => {
         try {
@@ -60,7 +65,7 @@ export const AllNetRouter = (plugins: CorePlugin[]) => {
             bodyStr = decodeDFI(bodyStr);
             Logger.info(`[AllNet] PowerOn decoded request: ${bodyStr}`);
         } else {
-            Logger.warn('[AllNet] PowerOn received without DFI pragma — proceeding anyway');
+            Logger.warn('[AllNet] PowerOn received without DFI pragma');
             Logger.info(`[AllNet] PowerOn raw request: ${bodyStr}`);
         }
 
@@ -75,7 +80,7 @@ export const AllNetRouter = (plugins: CorePlugin[]) => {
 
         await ensureCabinet(serial);
 
-        const host = 'naominet.jp';
+        const host = resolveHostname();
         const uri = `http://${host}/${game_id}/${ver.replace(/\./g, '')}/`;
 
         const now = new Date();
@@ -119,7 +124,6 @@ export const AllNetRouter = (plugins: CorePlugin[]) => {
             delete responseObj.allnet_id;
             delete responseObj.res_ver;
         } else {
-            // AllnetPowerOnResponse (v1): has year/month/day/hour/minute/second, no utc_time etc
             responseObj.year = String(now.getUTCFullYear());
             responseObj.month = String(now.getUTCMonth() + 1);
             responseObj.day = String(now.getUTCDate());
@@ -191,11 +195,11 @@ export const AllNetRouter = (plugins: CorePlugin[]) => {
 
             const image = parsed?.appimage || parsed?.optimage;
             if (!image || !image.serial || image.serial.length === 0) {
-                Logger.warn(`[AllNet] DeliveryReport: missing/invalid payload: ${JSON.stringify(parsed)}`);
+                Logger.warn(`[AllNet] DeliveryReport: missing/invalid payload`);
                 return res.send('NG');
             }
 
-            Logger.info(`[AllNet] DeliveryReport serial=${image.serial} rf_state=${image.rf_state} as=${image.as} gd=${image.gd}`);
+            Logger.info(`[AllNet] DeliveryReport serial=${image.serial} rf_state=${image.rf_state}`);
             res.send('OK');
         } catch (err) {
             Logger.error(`[AllNet] DeliveryReport error: ${err.message}`);
@@ -204,12 +208,10 @@ export const AllNetRouter = (plugins: CorePlugin[]) => {
     });
 
     router.post('/sys/servlet/Alive', (req, res) => {
-        Logger.info(`[AllNet] Alive ping`);
         res.send('OK');
     });
 
     router.get('/naomitest.html', (req, res) => {
-        Logger.info(`[AllNet] naomitest.html hit`);
         res.send('naomi ok');
     });
 
@@ -217,7 +219,7 @@ export const AllNetRouter = (plugins: CorePlugin[]) => {
         let body = req.body;
 
         if (Buffer.isBuffer(body) && body.length > 0) {
-            try { body = zlib.inflateRawSync(body); } catch { /* not compressed */ }
+            try { body = zlib.inflateRawSync(body); } catch { }
         }
 
         const params = new URLSearchParams(body.toString());
@@ -239,9 +241,7 @@ export const AllNetRouter = (plugins: CorePlugin[]) => {
             protocolver: '1.000',
         };
 
-        const respStr = toResponseStr(resp);
-        Logger.info(`[Billing] Response: ${respStr.trim()}`);
-        res.send(respStr);
+        res.send(toResponseStr(resp));
     });
 
     return router;

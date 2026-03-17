@@ -345,16 +345,38 @@ export async function FindProfileByAccessCode(
   }
 }
 
+// Matches artemis card.to_access_code(luid):
+// int(luid_hex, 16) zero-padded to 20 decimal digits
+export function IdmToAccessCode(idmHex: string): string {
+  return BigInt('0x' + idmHex.padStart(16, '0')).toString(10).padStart(20, '0');
+}
+
 export async function FindProfileByFeliCa(
   idmHex: string
 ): Promise<{ aimeId: number; accessCode: string } | null> {
   try {
-    const felica = await CoreDB.findOneAsync<any>({ __s: 'felica', idm: idmHex.toUpperCase() });
-    if (!felica) return null;
-    const card = await CoreDB.findOneAsync<any>({ __s: 'card', cid: felica.cid });
-    if (!card) return null;
-    const aimeId = await FindOrCreateAimeId(card.__refid);
-    return { aimeId, accessCode: felica.cid };
+    const idm = idmHex.toUpperCase().padStart(16, '0');
+
+    // 1. direct felica record (registered via RegisterFeliCa)
+    const felica = await CoreDB.findOneAsync<any>({ __s: 'felica', idm });
+    if (felica) {
+      const card = await CoreDB.findOneAsync<any>({ __s: 'card', cid: felica.cid });
+      if (card) {
+        const aimeId = await FindOrCreateAimeId(card.__refid);
+        return { aimeId, accessCode: felica.cid };
+      }
+    }
+
+    // 2. artemis fallback: derive access code from IDm and look up that card
+    const derivedAc = IdmToAccessCode(idm);
+    const card = await CoreDB.findOneAsync<any>({ __s: 'card', cid: derivedAc });
+    if (card) {
+      await CoreDB.insertAsync({ __s: 'felica', idm, cid: derivedAc });
+      const aimeId = await FindOrCreateAimeId(card.__refid);
+      return { aimeId, accessCode: derivedAc };
+    }
+
+    return null;
   } catch (err) {
     Logger.error(err);
     return null;
@@ -367,18 +389,26 @@ export async function RegisterFeliCa(
 ): Promise<{ aimeId: number; accessCode: string } | null> {
   try {
     if (!CONFIG.allow_register) return null;
-    const count = await GetUniqueInt();
-    const suffix = count.toString(16).padStart(11, '0').toUpperCase();
-    const accessCode = `01035${suffix}`;
+    const idm = idmHex.toUpperCase().padStart(16, '0');
+
+    // artemis: derive access code from IDm (same as to_access_code)
+    const accessCode = IdmToAccessCode(idm);
     const cid = accessCode;
 
-    const profile = await CreateProfile('0000', gameCode);
-    if (!profile) return null;
+    // check if card already exists (idempotent)
+    let card = await CoreDB.findOneAsync<any>({ __s: 'card', cid });
+    if (!card) {
+      const profile = await CreateProfile('0000', gameCode);
+      if (!profile) return null;
+      await CreateCard(cid, profile.__refid);
+      card = await CoreDB.findOneAsync<any>({ __s: 'card', cid });
+      if (!card) return null;
+    }
 
-    await CreateCard(cid, profile.__refid);
-    await CoreDB.insertAsync({ __s: 'felica', idm: idmHex.toUpperCase(), cid });
+    const existing = await CoreDB.findOneAsync<any>({ __s: 'felica', idm });
+    if (!existing) await CoreDB.insertAsync({ __s: 'felica', idm, cid });
 
-    const aimeId = await FindOrCreateAimeId(profile.__refid);
+    const aimeId = await FindOrCreateAimeId(card.__refid);
     return { aimeId, accessCode };
   } catch (err) {
     Logger.error(err);

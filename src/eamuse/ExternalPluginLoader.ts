@@ -30,6 +30,7 @@ import {
   APIUpsert,
   APICount,
   Exists,
+  FindRefidByAimeId,
 } from '../utils/EamuseIO';
 import { readdirSync, existsSync } from 'fs';
 import {
@@ -195,6 +196,9 @@ export function LoadExternalPlugins() {
     },
     DecodeString: (buffer: Buffer, encoding: KBinEncoding) => {
       return iconv.decode(buffer, encoding);
+    },
+    GetRefidFromUserId: (userId: number) => {
+      return FindRefidByAimeId(userId);
     },
   };
 

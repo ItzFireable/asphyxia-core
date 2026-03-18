@@ -1071,10 +1071,16 @@ declare namespace U {
    * Decode a string from a specified encoding
    *
    * returns a string
-   * @param buffer binary data to  decode
+   * @param buffer binary data to decode
    * @param encoding see [[KEncoding]]
    */
   function DecodeString(buffer: Buffer, encoding: KEncoding): string;
+
+  /**
+   * Get ref ID from Aime user ID
+   * @param userId
+   */
+  function GetRefidFromUserId(userId: number): any;
 }
 
 /** @ignore */

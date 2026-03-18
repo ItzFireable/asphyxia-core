@@ -168,9 +168,6 @@ export const SegaRouter = (plugins: CorePlugin[]) => {
 
         Logger.info(`[SegaRouter] ${game} v${version} (int:${internalVer}) ${
             endpoint} (Encrypted: ${encrypted})`);
-        Logger.debug(
-            `[SegaRouter] Request body: ${JSON.stringify(reqData, null, 2)}`);
-
         let result: any;
         try {
           result = await plugin.runSega(game, endpoint, reqData);

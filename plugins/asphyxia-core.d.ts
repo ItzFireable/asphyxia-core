@@ -1037,6 +1037,12 @@ declare namespace U {
   function GetConfig(key: string): any;
 
   /**
+   * Get config from global configuration file.
+   * @param key
+   */
+  function GetCoreConfig(key: string): any;
+
+  /**
    * Convert Card Number / Data Transfer Number to NFC serial
    *
    * returns null if the card number is invalid

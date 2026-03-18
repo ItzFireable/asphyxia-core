@@ -77,14 +77,6 @@ function Main() {
   EAMUSE.set('views', path.join(ASSETS_PATH, 'views'));
   EAMUSE.set('view engine', 'pug');
 
-  EAMUSE.use((req, res, next) => {
-    if (!req.url.startsWith('/static') && !req.url.startsWith('/api')) {
-      Logger.debug(`[Express] ${req.method} ${req.url} (Host: ${req.headers.host})`);
-      Logger.debug(`[Express] Headers: ${JSON.stringify(req.headers)}`);
-    }
-    next();
-  });
-
   const rawBuffer = express.raw({ type: '*/*', limit: '10mb' });
   const segaAllnetPaths = [
     '/sys/', '/net/', '/request', '/report-api/',

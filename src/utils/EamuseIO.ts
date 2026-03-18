@@ -268,9 +268,13 @@ export async function FindOrCreateAimeId(refid: string): Promise<number> {
       return profile.aime_id;
     }
     const id = await GetUniqueInt();
+    // upsert: true ensures the aime_id field is written even if the profile
+    // document hasn't been fully committed yet (e.g. during SEGA card
+    // registration where CreateProfile and FindOrCreateAimeId run back-to-back)
     await CoreDB.updateAsync(
       { __s: 'profile', __refid: refid },
-      { $set: { aime_id: id } }
+      { $set: { aime_id: id } },
+      { upsert: true }
     );
     return id;
   } catch (err) {
@@ -543,11 +547,22 @@ export async function FindCardsByRefid(refid: string) {
   }
 }
 
+function isAllNetAccessCode(cid: string): boolean {
+  return /^\d{20}$/.test(cid);
+}
+
+function formatAllNetCard(cid: string): string {
+  return cid.replace(/(\d{4})(?=\d)/g, '$1 ').trim();
+}
+
 export async function CreateCard(cid: string, refid: string, forcePrint?: string) {
   let print = '<Invalid Card>';
 
   if (forcePrint) {
     print = forcePrint;
+  } else if (isAllNetAccessCode(cid)) {
+    // all.net / SEGA AimeDB card — use formatted access code as display name
+    print = formatAllNetCard(cid);
   } else {
     try {
       print = nfc2card(cid);

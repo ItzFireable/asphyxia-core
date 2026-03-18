@@ -1598,6 +1598,16 @@ webui.post(
       } catch {
       }
 
+      // all.net / SEGA AimeDB — 20-digit decimal access code
+      // strip spaces/dashes so copy-pasted "0123 4567 8901 2345 6789" also works
+      try {
+        const normalized20 = card.replace(/[\s\-]/g, '');
+        if (/^\d{20}$/.test(normalized20) && !(await FindCard(normalized20))) {
+          await CreateCard(normalized20, refid);
+        }
+      } catch {
+      }
+
       res.sendStatus(200);
     }));
 

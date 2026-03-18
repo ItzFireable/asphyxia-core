@@ -173,6 +173,9 @@ export function LoadExternalPlugins() {
       if (!CONFIG[plugin]) return undefined;
       return CONFIG[plugin][key];
     },
+    GetCoreConfig: (key: string) => {
+      return CONFIG[key];
+    },
     NFC2Card: (nfc: string) => {
       try {
         return nfc2card(nfc);

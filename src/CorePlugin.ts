@@ -1,22 +1,22 @@
-import { EamuseRouteHandler } from './eamuse/EamuseRouteContainer';
-import { EamuseInfo } from './middlewares/EamuseMiddleware';
-import { EamuseSend } from './eamuse/EamuseSend';
-import { isNil } from 'lodash';
-import { Logger } from './utils/Logger';
-import { PLUGIN_PATH, APIFindOne, APIFind } from './utils/EamuseIO';
+import {readdirSync, readFileSync} from 'fs';
+import {isNil} from 'lodash';
 import path from 'path';
-import { readdirSync, readFileSync } from 'fs';
-import { FindCard, CreateProfile, CreateCard, BindProfile } from './utils/EamuseIO';
+import {compile} from 'pug';
 
-import { compile } from 'pug';
-import { CONFIG } from './utils/ArgConfig';
-import { nfc2card } from './utils/CardCipher';
+import {EamuseRouteHandler} from './eamuse/EamuseRouteContainer';
+import {EamuseSend} from './eamuse/EamuseSend';
+import {EamuseInfo} from './middlewares/EamuseMiddleware';
+import {CONFIG} from './utils/ArgConfig';
+import {nfc2card} from './utils/CardCipher';
+import {APIFind, APIFindOne, BindProfile, CreateCard, CreateProfile, FindCard, PLUGIN_PATH} from './utils/EamuseIO';
+import {Logger} from './utils/Logger';
 
-async function cardSanitizer(gameCode: string, str: string, refMap: any): Promise<string> {
+async function cardSanitizer(
+    gameCode: string, str: string, refMap: any): Promise<string> {
   const regex =
-    /(^|[^A-Za-z0-9])((?:01[A-Fa-f0-9]{14})|(?:E004[A-Fa-f0-9]{12}))($|[^A-Za-z0-9=\-_,+\/])/g;
+      /(^|[^A-Za-z0-9])((?:01[A-Fa-f0-9]{14})|(?:E004[A-Fa-f0-9]{12}))($|[^A-Za-z0-9=\-_,+\/])/g;
   const regexI =
-    /(^|[^A-Za-z0-9])((?:01[A-Fa-f0-9]{14})|(?:E004[A-Fa-f0-9]{12}))($|[^A-Za-z0-9=\-_,+\/])/;
+      /(^|[^A-Za-z0-9])((?:01[A-Fa-f0-9]{14})|(?:E004[A-Fa-f0-9]{12}))($|[^A-Za-z0-9=\-_,+\/])/;
   if (typeof str !== 'string') {
     return str;
   }
@@ -64,7 +64,8 @@ async function sanitization(gameCode: string, data: any, refMap: any = {}) {
       if (prop == '@attr') {
         for (const attr in data[prop]) {
           if (typeof data[prop][attr] == 'string') {
-            const refid = await cardSanitizer(gameCode, data[prop][attr], refMap);
+            const refid =
+                await cardSanitizer(gameCode, data[prop][attr], refMap);
             if (refid == null) return null;
             data['@attr'][attr] = refid;
           }
@@ -85,8 +86,7 @@ async function sanitization(gameCode: string, data: any, refMap: any = {}) {
 }
 
 export type WebUISend = {
-  json: (data: any) => void;
-  text: (data: string) => void;
+  json: (data: any) => void; text: (data: string) => void;
   file: (path: string) => void;
   buffer: (buffer: Buffer) => void;
   redirect: (url: string) => void;
@@ -98,25 +98,16 @@ export class CorePlugin {
   private pluginName: string;
   private pluginIdentifier: string;
   private gameCodes: string[];
-  private routes: {
-    [method: string]: boolean | EamuseRouteHandler;
-  };
-  private unhandled: boolean | EamuseRouteHandler;
-  private contributors: {
-    name: string;
-    link?: string;
-  }[];
+  private routes: {[method: string]: boolean|EamuseRouteHandler;};
+  private unhandled: boolean|EamuseRouteHandler;
+  private contributors: {name: string; link?: string;}[];
 
   private uiPages: string[];
   private uiProfiles: string[];
-  private uiEvents: {
-    [event: string]: WebUIEventHandler;
-  };
+  private uiEvents: {[event: string]: WebUIEventHandler;};
   private uiCache: {
-    [file: string]: {
-      props: { [field: string]: string };
-      fn: (local: any) => string;
-    };
+    [file: string]:
+        {props: {[field: string]: string}; fn: (local: any) => string;};
   };
 
   private instance: any;
@@ -125,7 +116,8 @@ export class CorePlugin {
   private segaMethodNames: string[] = [];
   private segaIterCounts: Record<string, number> = {};
   private segaVersionMap: (gameCode: string, version: number) => number = null;
-  private segaCryptoKeys: Record<string, [string, string, string, number?]> = {};
+  private segaCryptoKeys:
+      Record<string, [string, string, string, number?]> = {};
 
   constructor(folderName: string, instance: any) {
     this.instance = instance;
@@ -142,25 +134,22 @@ export class CorePlugin {
     this.uiEvents = {};
     const webuiPath = path.join(PLUGIN_PATH, folderName, 'webui');
     try {
-      const files = readdirSync(webuiPath, { encoding: 'utf8', withFileTypes: true }).filter(
-        file =>
-          file.isFile() &&
-          file.name.endsWith('.pug') &&
-          !file.name.startsWith('_') &&
-          file.name != 'profiles.pug' &&
-          file.name != 'profile.pug' &&
-          file.name != 'static.pug'
-      );
-      this.uiPages = files
-        .filter(f => !f.name.startsWith('profile_'))
-        .map(f => path.basename(f.name, '.pug'))
-        .sort();
-      this.uiProfiles = files
-        .filter(f => f.name.startsWith('profile_'))
-        .map(f => path.basename(f.name, '.pug'))
-        .sort();
+      const files =
+          readdirSync(webuiPath, {encoding: 'utf8', withFileTypes: true})
+              .filter(
+                  file => file.isFile() && file.name.endsWith('.pug') &&
+                      !file.name.startsWith('_') &&
+                      file.name != 'profiles.pug' &&
+                      file.name != 'profile.pug' && file.name != 'static.pug');
+      this.uiPages = files.filter(f => !f.name.startsWith('profile_'))
+                         .map(f => path.basename(f.name, '.pug'))
+                         .sort();
+      this.uiProfiles = files.filter(f => f.name.startsWith('profile_'))
+                            .map(f => path.basename(f.name, '.pug'))
+                            .sort();
       this.CompilePages();
-    } catch { }
+    } catch {
+    }
   }
 
   public Register() {
@@ -168,7 +157,7 @@ export class CorePlugin {
   }
 
   private ExpressionCheck(isProfile: boolean, expression: string) {
-    const nothingFunc = () => { };
+    const nothingFunc = () => {};
 
     const DB = {
       FindOne: nothingFunc,
@@ -176,6 +165,7 @@ export class CorePlugin {
     };
     const U = {
       GetConfig: nothingFunc,
+      GetCoreConfig: nothingFunc,
     };
 
     if (isProfile) {
@@ -188,50 +178,50 @@ export class CorePlugin {
 
   private CompilePages() {
     for (const page of this.uiPages.concat(this.uiProfiles)) {
-      const filePath = path.join(PLUGIN_PATH, this.pluginIdentifier, 'webui', `${page}.pug`);
+      const filePath =
+          path.join(PLUGIN_PATH, this.pluginIdentifier, 'webui', `${page}.pug`);
       try {
-        const template = readFileSync(filePath, { encoding: 'utf8' });
+        const template = readFileSync(filePath, {encoding: 'utf8'});
 
         const dataBlock = template.match(
-          /^\/\/DATA\/\/\s*$[\n|\r|\n\r]((?:^\s+[_a-z]\w*:\s*.+$[\n|\r|\n\r]?)+)/m
-        );
+            /^\/\/DATA\/\/\s*$[\n|\r|\n\r]((?:^\s+[_a-z]\w*:\s*.+$[\n|\r|\n\r]?)+)/m);
 
         const fn = compile(template);
-        const props: { [field: string]: string } = {};
+        const props: {[field: string]: string} = {};
 
         const lines = dataBlock ? dataBlock[1].split('\n') : [];
         for (const line of lines) {
           const parts = line.trim().match(/([_a-z]\w*):\s*(.*)/);
           if (parts) {
             const field = parts[1];
-            const expression = parts[2].endsWith(',')
-              ? parts[2].slice(0, parts.length - 1)
-              : parts[2];
+            const expression = parts[2].endsWith(',') ?
+                parts[2].slice(0, parts.length - 1) :
+                parts[2];
 
             this.ExpressionCheck(page.startsWith('profile_'), expression);
             props[field] = expression;
           }
         }
 
-        this.uiCache[page] = { props, fn };
+        this.uiCache[page] = {props, fn};
       } catch (err) {
         Logger.error(`Can not compile WebUI file "${page}.pug":`, {
           plugin: this.pluginIdentifier,
         });
-        Logger.error(err, { plugin: this.pluginIdentifier });
+        Logger.error(err, {plugin: this.pluginIdentifier});
       }
     }
   }
 
   public RegisterContributor(name: string, link?: string) {
-    this.contributors.push({ name, link });
+    this.contributors.push({name, link});
   }
 
   public RegisterGameCode(gameCode: string) {
     this.gameCodes.push(gameCode);
   }
 
-  public RegisterRoute(method: string, route?: boolean | EamuseRouteHandler) {
+  public RegisterRoute(method: string, route?: boolean|EamuseRouteHandler) {
     this.routes[method] = route;
   }
 
@@ -243,7 +233,8 @@ export class CorePlugin {
     if (this.uiEvents[event]) {
       return await this.uiEvents[event](data, send);
     } else {
-      Logger.warn(`event "${event}" does not exists`, { plugin: this.pluginIdentifier });
+      Logger.warn(
+          `event "${event}" does not exists`, {plugin: this.pluginIdentifier});
     }
   }
 
@@ -263,11 +254,13 @@ export class CorePlugin {
     this.segaIterCounts = counts;
   }
 
-  public RegisterSegaVersionMap(mapFn: (gameCode: string, version: number) => number) {
+  public RegisterSegaVersionMap(
+      mapFn: (gameCode: string, version: number) => number) {
     this.segaVersionMap = mapFn;
   }
 
-  public RegisterSegaCrypto(keys: Record<string, [string, string, string, number?]>) {
+  public RegisterSegaCrypto(
+      keys: Record<string, [string, string, string, number?]>) {
     this.segaCryptoKeys = keys;
   }
 
@@ -308,10 +301,12 @@ export class CorePlugin {
 
     const DB = {
       FindOne: (arg1: any, arg2?: any) => {
-        return APIFindOne({ identifier: this.pluginIdentifier, core: false }, arg1, arg2);
+        return APIFindOne(
+            {identifier: this.pluginIdentifier, core: false}, arg1, arg2);
       },
       Find: (arg1: any, arg2?: any) => {
-        return APIFind({ identifier: this.pluginIdentifier, core: false }, arg1, arg2);
+        return APIFind(
+            {identifier: this.pluginIdentifier, core: false}, arg1, arg2);
       },
     };
     const U = {
@@ -319,28 +314,24 @@ export class CorePlugin {
         if (!CONFIG[this.pluginIdentifier]) return undefined;
         return CONFIG[this.pluginIdentifier][key];
       },
+      GetCoreConfig: (key: string) => {
+        return CONFIG[key];
+      },
     };
 
-    const IO = {},
-      $ = {},
-      R = {},
-      K = {};
+    const IO = {}, $ = {}, R = {}, K = {};
 
-    const local: any = { refid };
+    const local: any = {refid};
     for (const prop in cache.props) {
       local[prop] = await eval(cache.props[prop]);
     }
 
-    return cache.fn({ ...data, ...local });
+    return cache.fn({...data, ...local});
   }
 
   public async run(
-    moduleName: string,
-    method: string,
-    info: EamuseInfo,
-    data: any,
-    send: EamuseSend
-  ): Promise<boolean> {
+      moduleName: string, method: string, info: EamuseInfo, data: any,
+      send: EamuseSend): Promise<boolean> {
     let handler = this.routes[`${moduleName}.${method}`];
 
     const sanitized = await sanitization(info.gameCode, data);
@@ -372,25 +363,24 @@ export class CorePlugin {
     try {
       await handler(info, sanitized, send);
     } catch (err) {
-      Logger.error(err, { plugin: this.pluginIdentifier });
+      Logger.error(err, {plugin: this.pluginIdentifier});
       return false;
     }
 
     return true;
   }
 
-  public async runSega(
-    gameCode: string,
-    method: string,
-    data: any
-  ): Promise<any> {
+  public async runSega(gameCode: string, method: string, data: any):
+      Promise<any> {
     if (this.instance && typeof this.instance[method] === 'function') {
       try {
         return await this.instance[method](data);
       } catch (err) {
-        Logger.error(`Error in Sega handler ${method}:`, { plugin: this.pluginIdentifier });
+        Logger.error(
+            `Error in Sega handler ${method}:`,
+            {plugin: this.pluginIdentifier});
         Logger.error(err);
-        return { returnCode: -1 };
+        return {returnCode: -1};
       }
     }
 
@@ -399,8 +389,9 @@ export class CorePlugin {
       return await this.instance.handleSega(gameCode, method, data);
     }
 
-    Logger.warn(`No handler for Sega method ${method} in plugin ${this.pluginIdentifier}`);
-    return { returnCode: 1 }; // Default success to not break game
+    Logger.warn(`No handler for Sega method ${method} in plugin ${
+        this.pluginIdentifier}`);
+    return {returnCode: 1};  // Default success to not break game
   }
 
   public get GameCodes() {
